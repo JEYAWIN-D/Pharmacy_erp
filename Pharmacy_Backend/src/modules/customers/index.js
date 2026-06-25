@@ -1,0 +1,12 @@
+import express from 'express';
+import { customerController } from './customer.module.js';
+import { authenticate } from '../../shared/middleware/authenticate.js';
+const router = express.Router();
+router.use(authenticate);
+router.get('/mobile/:mobile', customerController.getByMobile);
+router.get('/', customerController.getAll);
+router.get('/:id', customerController.getById);
+router.post('/', customerController.create);
+router.put('/:id', customerController.update);
+router.delete('/:id', customerController.remove);
+export default router;

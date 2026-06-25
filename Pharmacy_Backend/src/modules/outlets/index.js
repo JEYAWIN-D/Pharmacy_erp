@@ -1,0 +1,10 @@
+import express from 'express';
+import { outletsController } from './outlets.module.js';
+import { authenticate } from '../../shared/middleware/authenticate.js';
+const router = express.Router();
+router.use(authenticate);
+router.get('/', outletsController.getAll);
+router.post('/', outletsController.create);
+router.get('/:id/stock', outletsController.getStock);
+router.post('/stock', outletsController.updateStock);
+export default router;

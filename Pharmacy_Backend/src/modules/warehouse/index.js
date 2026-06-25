@@ -1,0 +1,12 @@
+import express from 'express';
+import { warehouseController } from './warehouse.module.js';
+import { authenticate } from '../../shared/middleware/authenticate.js';
+const router = express.Router();
+router.use(authenticate);
+router.get('/', warehouseController.getWarehouses);
+router.post('/', warehouseController.createWarehouse);
+router.get('/stock', warehouseController.getStock);
+router.post('/stock', warehouseController.updateStock);
+router.get('/transfers', warehouseController.getTransfers);
+router.post('/transfers', warehouseController.transfer);
+export default router;

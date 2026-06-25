@@ -1,0 +1,11 @@
+import express from 'express';
+import { notificationsController } from './notification.module.js';
+import { authenticate } from '../../shared/middleware/authenticate.js';
+const router = express.Router();
+router.use(authenticate);
+router.get('/', notificationsController.getAll);
+router.post('/', notificationsController.create);
+router.get('/unresolved-count', notificationsController.getUnresolved);
+router.put('/resolve-all', notificationsController.resolveAll);
+router.put('/:id/resolve', notificationsController.resolve);
+export default router;

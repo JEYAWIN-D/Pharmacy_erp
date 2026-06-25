@@ -1,0 +1,11 @@
+import express from 'express';
+import { prescriptionController } from './prescription.module.js';
+import { authenticate } from '../../shared/middleware/authenticate.js';
+const router = express.Router();
+router.use(authenticate);
+router.get('/', prescriptionController.getAll);
+router.get('/:id', prescriptionController.getById);
+router.post('/', prescriptionController.create);
+router.put('/:id', prescriptionController.update);
+router.delete('/:id', prescriptionController.remove);
+export default router;
