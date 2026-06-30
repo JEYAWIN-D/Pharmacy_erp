@@ -1,386 +1,2616 @@
-import React, { useState } from 'react';
-import { Database, FileText, Plus, PackageCheck, RotateCcw, ClipboardList } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { ErrorBoundary } from '../../components/ErrorBoundary';
+
+import { 
+  Database, FileText, Plus, PackageCheck, ClipboardList,
+  CheckCircle, AlertTriangle, TrendingUp, Truck, Layers,
+  Search, X, Calendar, User, Building, ShieldAlert,
+  ArrowRight, Check, Play, Edit3, Trash, Info, RefreshCw
+} from 'lucide-react';
 import { usePurchaseController } from './usePurchaseController';
 import { usePurchaseRequestController } from './usePurchaseRequestController';
 import { useGRNController } from './useGRNController';
+import { purchaseAPI } from '../../db/api.js';
+import { useToast } from '../billing/useToast';
+import ToastContainer from '../billing/ToastContainer';
 
-export default function PurchaseView({ role, setSchemaModalTable }) {
-  const [activeTab, setActiveTab] = useState('pr');
+// Helper: extract supplier name safely
+const getSupplierName = (sup) => {
+  if (!sup) return 'Unknown Supplier';
+  if (typeof sup === 'object') return sup.name || 'Unknown Supplier';
+  return sup;
+};
 
-  const {
-    purchaseOrders, suppliers, medicines,
-    poSupplier, setPoSupplier, poMedicine, setPoMedicine,
-    poQty, setPoQty, poPrice, setPoPrice,
-    handleCreatePO, approvePO, receivePO,
-    returnSupplier, setReturnSupplier, returnMedId, setReturnMedId,
-    returnQty, setReturnQty, returnReason, setReturnReason, handleSupplierReturn
-  } = usePurchaseController(role);
+const getPOStatusDisplay = (status) => {
+  if (status === 'PO_GENERATED' || status === 'Draft') return 'Pending';
+  if (status === 'PO_CONFIRMED' || status === 'Sent') return 'Confirmed';
+  if (status === 'PARTIALLY_RECEIVED' || status === 'Partially Received') return 'Partially Received';
+  if (status === 'COMPLETED' || status === 'Completed' || status === 'Closed') return 'Completed';
+  if (status === 'CANCELLED' || status === 'Cancelled' || status === 'Rejected') return 'Cancelled';
+  return status;
+};
 
-  const {
-    purchaseRequests, newPR, setNewPR,
-    handleCreateRequest, handleApprovePR, handleRejectPR
-  } = usePurchaseRequestController(role);
+// Searchable Dropdown / Combobox Component
+function SearchableDropdown({ options, value, onChange, placeholder, inputClass, className }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const dropdownRef = React.useRef(null);
 
-  const {
-    goodsReceipts, pendingGRNOrders, selectedPOId, grnItems, receivedBy, setReceivedBy,
-    loadPOItems, updateGrnItem, handleSubmitGRN
-  } = useGRNController();
+  useEffect(() => {
+    const selectedOpt = options.find(opt => String(opt.id) === String(value) || String(opt.name) === String(value));
+    if (selectedOpt) {
+      setSearchTerm(selectedOpt.name || selectedOpt.id);
+    } else {
+      setSearchTerm(value || '');
+    }
+  }, [value, options]);
 
-  const tabs = [
-    { id: 'pr', label: 'Purchase Requests', icon: <ClipboardList size={13} /> },
-    { id: 'po', label: 'Purchase Orders', icon: <FileText size={13} /> },
-    { id: 'grn', label: 'GRN', icon: <PackageCheck size={13} /> },
-    { id: 'return', label: 'Supplier Return', icon: <RotateCcw size={13} /> }
-  ];
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setIsOpen(false);
+        const selectedOpt = options.find(opt => String(opt.id) === String(value) || String(opt.name) === String(value));
+        if (selectedOpt) {
+          setSearchTerm(selectedOpt.name || selectedOpt.id);
+        } else {
+          setSearchTerm(value || '');
+        }
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [value, options]);
 
-  const statusColor = (status) => {
-    if (status === 'Approved') return 'text-blue-700 bg-blue-50 border-blue-200/50';
-    if (status === 'Rejected') return 'text-red-700 bg-red-50 border-red-200/50';
-    if (status === 'Pending') return 'text-amber-700 bg-amber-50 border-amber-200/50 animate-pulse';
-    return 'text-slate-600 bg-slate-50 border-slate-200/50';
-  };
+  const filteredOptions = options.filter(opt => {
+    const name = String(opt.name || opt.id || '').toLowerCase();
+    return name.includes(searchTerm.toLowerCase());
+  });
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="text-left">
-          <h3 className="text-base font-extrabold text-slate-800 uppercase flex items-center gap-2">
-            Purchase Management
-            <button onClick={() => setSchemaModalTable('purchase_request')} className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600 transition cursor-pointer" title="View Schema">
-              <Database size={14} />
-            </button>
-          </h3>
-          <p className="text-xs text-slate-400">Purchase Requests → PO → GRN → Supplier Returns</p>
-        </div>
-        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
-          {tabs.map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${activeTab === tab.id ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-              {tab.icon}{tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* ── TAB 1: PURCHASE REQUESTS ─────────────────────────────────────── */}
-      {activeTab === 'pr' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="unique-card p-6 lg:col-span-2 text-left space-y-4">
-            <h4 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-              <ClipboardList size={14} className="text-blue-600" /> Purchase Request Register
-            </h4>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-100 text-slate-400 uppercase font-bold text-[10px]">
-                    <th className="py-2.5">PR ID</th>
-                    <th className="py-2.5">Medicine</th>
-                    <th className="py-2.5 text-center">Qty</th>
-                    <th className="py-2.5 text-center">Priority</th>
-                    <th className="py-2.5">Date</th>
-                    <th className="py-2.5 text-center">Status</th>
-                    <th className="py-2.5 text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {purchaseRequests.map(pr => (
-                    <tr key={pr.id} className="border-b border-slate-100 hover:bg-slate-50/50">
-                      <td className="py-3 text-slate-600 font-mono font-bold text-[10px]">{pr.id}</td>
-                      <td className="py-3 font-bold text-slate-700">{pr.medicineName}</td>
-                      <td className="py-3 text-center font-black text-slate-800">{pr.requestedQty}</td>
-                      <td className="py-3 text-center">
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${pr.priority === 'High' ? 'text-red-700 bg-red-50 border-red-200/50' : pr.priority === 'Medium' ? 'text-amber-700 bg-amber-50 border-amber-200/50' : 'text-slate-600 bg-slate-50 border-slate-200/50'}`}>{pr.priority}</span>
-                      </td>
-                      <td className="py-3 text-slate-500 font-semibold">{pr.requestDate}</td>
-                      <td className="py-3 text-center">
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${statusColor(pr.status)}`}>{pr.status}</span>
-                      </td>
-                      <td className="py-3 text-center">
-                        {pr.status === 'Pending' && (
-                          <div className="flex items-center justify-center gap-1">
-                            <button onClick={() => handleApprovePR(pr.id)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-bold transition cursor-pointer">Approve</button>
-                            <button onClick={() => handleRejectPR(pr.id)} className="px-2 py-1 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg text-[10px] font-bold transition cursor-pointer">Reject</button>
-                          </div>
-                        )}
-                        {pr.status !== 'Pending' && <span className="text-[10px] text-slate-400 font-semibold">{pr.status === 'Approved' ? '✓ PO Created' : '✗ Rejected'}</span>}
-                      </td>
-                    </tr>
-                  ))}
-                  {purchaseRequests.length === 0 && <tr><td colSpan="7" className="py-6 text-center text-slate-400">No purchase requests found.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <div className="unique-form-panel p-6 text-left space-y-4">
-            <h4 className="text-sm font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-              <Plus size={15} className="text-blue-600" /> Raise New PR
-            </h4>
-            <form onSubmit={handleCreateRequest} className="space-y-3">
-              <div>
-                <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Medicine *</label>
-                <select value={newPR.medicineId} onChange={(e) => setNewPR({ ...newPR, medicineId: e.target.value })}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none cursor-pointer">
-                  {medicines.map(m => <option key={m.id} value={m.id}>{m.medicineName || m.name} (Stock: {m.stockQuantity ?? m.stock ?? 0})</option>)}
-                </select>
+    <div ref={dropdownRef} className={`relative ${className || ''}`}>
+      <input
+        type="text"
+        value={searchTerm}
+        onChange={(e) => {
+          setSearchTerm(e.target.value);
+          setIsOpen(e.target.value.trim() !== '');
+          if (e.target.value === '') {
+            onChange('');
+          }
+        }}
+        autoComplete="off"
+        placeholder={placeholder}
+        className={inputClass || "w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 focus:outline-none"}
+      />
+      {isOpen && searchTerm.trim() !== '' && (
+        <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-48 overflow-y-auto">
+          {filteredOptions.length > 0 ? (
+            filteredOptions.map((opt) => (
+              <div
+                key={opt.id || opt.name}
+                onClick={() => {
+                  onChange(opt.id);
+                  setSearchTerm(opt.name || opt.id);
+                  setIsOpen(false);
+                }}
+                className="p-2.5 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-700 cursor-pointer transition-colors border-b border-slate-50 last:border-b-0"
+              >
+                {opt.name || opt.id} {opt.stock !== undefined ? `(Stock: ${opt.stock})` : ''}
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Qty Needed *</label>
-                  <input type="number" placeholder="e.g. 100" value={newPR.requestedQty}
-                    onChange={(e) => setNewPR({ ...newPR, requestedQty: e.target.value })}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none" required />
-                </div>
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Priority *</label>
-                  <select value={newPR.priority} onChange={(e) => setNewPR({ ...newPR, priority: e.target.value })}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none cursor-pointer">
-                    <option value="High">High (Urgent)</option>
-                    <option value="Medium">Medium</option>
-                    <option value="Low">Low</option>
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Remarks</label>
-                <input type="text" placeholder="Reason for request..." value={newPR.remarks}
-                  onChange={(e) => setNewPR({ ...newPR, remarks: e.target.value })}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none" />
-              </div>
-              <button type="submit" className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-md cursor-pointer">Submit Purchase Request</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ── TAB 2: PURCHASE ORDERS ───────────────────────────────────────── */}
-      {activeTab === 'po' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="unique-card p-6 lg:col-span-2 text-left space-y-4">
-            <h4 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-              <FileText size={14} className="text-blue-600" /> Purchase Orders Register
-            </h4>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-100 text-slate-400 uppercase font-bold text-[10px]">
-                    <th className="py-2.5">PO ID</th>
-                    <th className="py-2.5">Supplier</th>
-                    <th className="py-2.5">Date</th>
-                    <th className="py-2.5 text-right">Total</th>
-                    <th className="py-2.5 text-center">Status</th>
-                    <th className="py-2.5 text-center">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {purchaseOrders.map(po => (
-                    <tr key={po.id} className="border-b border-slate-100 hover:bg-slate-50/50">
-                      <td className="py-3 text-slate-600 font-mono font-bold">{po.id}</td>
-                      <td className="py-3 font-bold text-slate-700">{po.supplier}</td>
-                      <td className="py-3 text-slate-500">{po.date}</td>
-                      <td className="py-3 text-right font-black text-slate-800">₹ {po.total.toFixed(2)}</td>
-                      <td className="py-3 text-center">
-                        <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold border ${po.status === 'Goods Received' ? 'text-blue-700 bg-blue-50 border-blue-200/50' : po.status === 'Approved' ? 'text-blue-700 bg-blue-50 border-blue-200/50' : 'text-amber-700 bg-amber-50 border-amber-200/50 animate-pulse'}`}>{po.status}</span>
-                      </td>
-                      <td className="py-3 text-center">
-                        {po.status === 'Pending Approval' && <button onClick={() => approvePO(po.id)} className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-bold transition cursor-pointer">Approve</button>}
-                        {po.status === 'Approved' && <button onClick={() => setActiveTab('grn')} className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold transition cursor-pointer">Create GRN →</button>}
-                        {po.status === 'Goods Received' && <span className="text-[10px] text-slate-400 font-semibold">✓ Completed</span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <div className="unique-form-panel p-6 text-left space-y-4">
-            <h4 className="text-sm font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-              <Plus size={15} className="text-blue-600" /> Create Purchase Order
-            </h4>
-            <form onSubmit={handleCreatePO} className="space-y-4">
-              <div>
-                <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Supplier</label>
-                <select value={poSupplier} onChange={(e) => setPoSupplier(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none cursor-pointer">
-                  {suppliers.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Medicine</label>
-                <select value={poMedicine} onChange={(e) => setPoMedicine(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none cursor-pointer">
-                  {medicines.map(m => <option key={m.id} value={m.id}>{m.medicineName || m.name}</option>)}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Qty</label>
-                  <input type="number" placeholder="100" value={poQty} onChange={(e) => setPoQty(e.target.value)}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none" required />
-                </div>
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Unit Price (₹)</label>
-                  <input type="number" step="0.01" placeholder="0.00" value={poPrice} onChange={(e) => setPoPrice(e.target.value)}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none" required />
-                </div>
-              </div>
-              <button type="submit" className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-md cursor-pointer">Send Purchase Order</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ── TAB 3: GRN ──────────────────────────────────────────────────── */}
-      {activeTab === 'grn' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="unique-card p-6 lg:col-span-2 text-left space-y-4">
-            <h4 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-              <PackageCheck size={14} className="text-blue-600" /> Goods Receipt History
-            </h4>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-100 text-slate-400 uppercase font-bold text-[10px]">
-                    <th className="py-2.5">GRN ID</th>
-                    <th className="py-2.5">PO Ref</th>
-                    <th className="py-2.5">Supplier</th>
-                    <th className="py-2.5">Date</th>
-                    <th className="py-2.5 text-center">Items</th>
-                    <th className="py-2.5 text-center">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {goodsReceipts.map(grn => (
-                    <tr key={grn.id} className="border-b border-slate-100 hover:bg-slate-50/50">
-                      <td className="py-3 text-slate-600 font-mono font-bold">{grn.id}</td>
-                      <td className="py-3 text-slate-500 font-mono">{grn.poId}</td>
-                      <td className="py-3 font-bold text-slate-700">{grn.supplierName}</td>
-                      <td className="py-3 text-slate-500">{grn.receivedDate}</td>
-                      <td className="py-3 text-center font-black text-slate-800">{grn.items?.length || 0}</td>
-                      <td className="py-3 text-center"><span className="px-2.5 py-0.5 rounded-full text-[9px] font-bold text-blue-700 bg-blue-50 border border-blue-200/50">{grn.status}</span></td>
-                    </tr>
-                  ))}
-                  {goodsReceipts.length === 0 && <tr><td colSpan="6" className="py-6 text-center text-slate-400">No GRNs recorded yet.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <div className="unique-form-panel p-6 text-left space-y-4">
-            <h4 className="text-sm font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-              <PackageCheck size={15} className="text-emerald-600" /> Record GRN
-            </h4>
-            <form onSubmit={handleSubmitGRN} className="space-y-3">
-              <div>
-                <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Select Approved PO *</label>
-                <select value={selectedPOId} onChange={(e) => loadPOItems(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none cursor-pointer">
-                  <option value="">— Select PO —</option>
-                  {pendingGRNOrders.map(po => <option key={po.id} value={po.id}>{po.id} — {po.supplier}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Received By</label>
-                <input type="text" value={receivedBy} onChange={(e) => setReceivedBy(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none" />
-              </div>
-              {grnItems.length > 0 && (
-                <div className="space-y-3">
-                  <span className="block text-[9px] font-bold text-slate-500 uppercase">Items to Receive:</span>
-                  {grnItems.map((item, idx) => (
-                    <div key={idx} className="p-3 bg-blue-50/60 border border-blue-100 rounded-xl space-y-2">
-                      <span className="block text-[10px] font-extrabold text-blue-800">{item.medicineName}</span>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Batch No *</label>
-                          <input type="text" placeholder="B-XXX-001" value={item.batchNumber}
-                            onChange={(e) => updateGrnItem(idx, 'batchNumber', e.target.value)}
-                            className="w-full p-2 bg-white border border-slate-200 rounded-lg text-[10px] focus:outline-none" required />
-                        </div>
-                        <div>
-                          <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Received Qty *</label>
-                          <input type="number" value={item.receivedQty}
-                            onChange={(e) => updateGrnItem(idx, 'receivedQty', parseInt(e.target.value))}
-                            className="w-full p-2 bg-white border border-slate-200 rounded-lg text-[10px] focus:outline-none" required />
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Expiry Date *</label>
-                        <input type="date" value={item.expiryDate}
-                          onChange={(e) => updateGrnItem(idx, 'expiryDate', e.target.value)}
-                          className="w-full p-2 bg-white border border-slate-200 rounded-lg text-[10px] focus:outline-none" required />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {pendingGRNOrders.length === 0 && <p className="text-xs text-slate-400 text-center py-2">No approved POs pending GRN.</p>}
-              <button type="submit" disabled={!selectedPOId || grnItems.length === 0}
-                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-xl text-xs font-bold transition shadow-md cursor-pointer">
-                Submit GRN & Update Stock
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ── TAB 4: SUPPLIER RETURN ──────────────────────────────────────── */}
-      {activeTab === 'return' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="unique-card p-6 lg:col-span-2 text-left space-y-4">
-            <h4 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-              <RotateCcw size={14} className="text-amber-600" /> Supplier Return History
-            </h4>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-100 text-slate-400 uppercase font-bold text-[10px]">
-                    <th className="py-2.5">Supplier</th>
-                    <th className="py-2.5">Medicine</th>
-                    <th className="py-2.5 text-center">Qty</th>
-                    <th className="py-2.5">Reason</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr><td colSpan="4" className="py-6 text-center text-slate-400">Use the form to log supplier returns</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <div className="unique-form-panel p-6 text-left space-y-4 border-l-amber-500">
-            <h4 className="text-sm font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-              <RotateCcw size={15} className="text-amber-600" /> Return to Supplier
-            </h4>
-            <form onSubmit={handleSupplierReturn} className="space-y-4">
-              <div>
-                <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Supplier</label>
-                <select value={returnSupplier} onChange={(e) => setReturnSupplier(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none cursor-pointer">
-                  {suppliers.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Medicine</label>
-                <select value={returnMedId} onChange={(e) => setReturnMedId(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none cursor-pointer">
-                  {medicines.map(m => <option key={m.id} value={m.id}>{m.medicineName || m.name} (Available: {m.stockQuantity ?? m.stock ?? 0} pcs)</option>)}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Qty to Return</label>
-                  <input type="number" placeholder="50" value={returnQty} onChange={(e) => setReturnQty(e.target.value)}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none" required />
-                </div>
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Return Reason</label>
-                  <input type="text" placeholder="e.g. Near expiry..." value={returnReason} onChange={(e) => setReturnReason(e.target.value)}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none" required />
-                </div>
-              </div>
-              <button type="submit" className="w-full py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition shadow-md cursor-pointer">Confirm Supplier Return</button>
-            </form>
-          </div>
+            ))
+          ) : (
+            <div className="p-2.5 text-xs text-slate-400 italic font-medium">No matches found</div>
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+export default function PurchaseView({ role, setSchemaModalTable }) {
+  // Date range filter state for dashboard and procurement history
+  const [filterStartDate, setFilterStartDate] = useState('');
+  const [filterEndDate, setFilterEndDate] = useState('');
+  const startDateRef = React.useRef(null);
+  const endDateRef = React.useRef(null);
+
+  // Format YYYY-MM-DD to DD/MM/YYYY for display
+  const formatDateDisplay = (isoDate) => {
+    if (!isoDate) return '';
+    const [y, m, d] = isoDate.split('-');
+    return `${d}/${m}/${y}`;
+  };
+
+  // Parse typed DD/MM/YYYY to YYYY-MM-DD
+  const parseTypedDate = (str) => {
+    if (!str) return '';
+    const parts = str.replace(/\//g, '-').split('-');
+    if (parts.length === 3) {
+      const [d, m, y] = parts;
+      if (d && m && y && y.length === 4) return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    }
+    return '';
+  };
+  const handlePrintPO = (po) => {
+    const printWindow = window.open('', '_blank', 'width=800,height=600');
+    if (!printWindow) {
+      alert('Popup blocker blocked invoice print. Please allow popups.');
+      return;
+    }
+    const itemsHtml = po.items.map(it => `
+      <tr>
+        <td style="padding: 8px; border-bottom: 1px solid #ddd;">${it.medicineName || 'Unknown'}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: center;">${it.qty}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right;">₹${Number(it.unitPrice).toFixed(2)}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right;">${it.tax || 0}%</td>
+        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right; font-weight: bold;">₹${Number(it.total).toFixed(2)}</td>
+      </tr>
+    `).join('');
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Purchase Order ${po.id}</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; color: #333; }
+            h2 { color: #1e3a8a; margin-bottom: 5px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th { background-color: #f3f4f6; padding: 8px; text-align: left; border-bottom: 2px solid #ddd; }
+            .header-info { display: flex; justify-content: space-between; margin-top: 15px; margin-bottom: 15px; font-size: 14px; }
+            .totals { margin-top: 20px; text-align: right; font-size: 16px; font-weight: bold; }
+          </style>
+        </head>
+        <body>
+          <h2>PURCHASE ORDER</h2>
+          <div style="font-size: 12px; color: #666;">PO Reference: ${po.id}</div>
+          <hr />
+          <div class="header-info">
+            <div>
+              <strong>Supplier:</strong> ${getSupplierName(po.supplier)}<br/>
+              <strong>Date:</strong> ${new Date(po.createdAt).toLocaleDateString('en-IN')}<br/>
+              <strong>Expected Delivery:</strong> ${po.expectedDelivery ? new Date(po.expectedDelivery).toLocaleDateString('en-IN') : 'N/A'}
+            </div>
+            <div>
+              <strong>Payment Terms:</strong> ${po.paymentTerms || 'Net 30'}<br/>
+              <strong>Status:</strong> ${po.status}
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Medicine Name</th>
+                <th style="text-align: center;">Qty Ordered</th>
+                <th style="text-align: right;">Unit Price</th>
+                <th style="text-align: right;">Tax Rate</th>
+                <th style="text-align: right;">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemsHtml}
+            </tbody>
+          </table>
+          <div class="totals">Grand Total: ₹${Number(po.total).toFixed(2)}</div>
+          <script>
+            window.onload = function() {
+              window.print();
+              window.close();
+            }
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  const getMedicineProcurementStatus = (medicineId) => {
+    const activePOForGRN = purchaseOrders.find(po => 
+      ['Delivered', 'Partially Received'].includes(po.status) &&
+      po.items?.some(it => it.medicineId === medicineId)
+    );
+    if (activePOForGRN) {
+      return { stage: 'GRN Pending', actionText: 'Create/View GRN', tab: 'grn', subView: 'create', id: activePOForGRN.id };
+    }
+
+    const activeShipment = shipments.find(sh =>
+      sh.status !== 'Delivered' &&
+      sh.items?.some(it => it.medicineId === medicineId)
+    );
+    if (activeShipment) {
+      return { stage: 'Shipment Started', actionText: 'Track Shipment', tab: 'shipments', subView: 'list', id: activeShipment.id };
+    }
+
+    const activePOShipped = purchaseOrders.find(po =>
+      ['Shipped', 'In Transit'].includes(po.status) &&
+      po.items?.some(it => it.medicineId === medicineId)
+    );
+    if (activePOShipped) {
+      return { stage: 'Shipment Started', actionText: 'Track Shipment', tab: 'shipments', subView: 'list', id: activePOShipped.id };
+    }
+
+    const activePO = purchaseOrders.find(po =>
+      ['Draft', 'Sent', 'Accepted'].includes(po.status) &&
+      po.items?.some(it => it.medicineId === medicineId)
+    );
+    if (activePO) {
+      return { stage: 'Purchase Order Created', actionText: 'View Purchase Order', tab: 'po', subView: 'details', id: activePO.id };
+    }
+
+    const activePR = purchaseRequests.find(pr =>
+      ['Pending', 'Approved', 'Partially Approved'].includes(pr.status) &&
+      pr.items?.some(it => it.medicineId === medicineId)
+    );
+    if (activePR) {
+      return { stage: 'Purchase Request Created', actionText: 'View Purchase Request', tab: 'pr', subView: 'details', id: activePR.id };
+    }
+
+    const completedPO = completedPOs.find(po =>
+      po.items?.some(it => it.medicineId === medicineId)
+    );
+    if (completedPO) {
+      return { stage: 'Completed', actionText: 'View Procurement History', tab: 'completed', subView: 'list', id: completedPO.id };
+    }
+
+    return { stage: 'Low Stock', actionText: 'Create Purchase Request', tab: 'pr', subView: 'create', id: null };
+  };
+
+  const getPOTraceTimeline = (po) => {
+    const timeline = [];
+    
+    timeline.push({ name: 'PO Created', done: true, date: new Date(po.createdAt).toLocaleDateString('en-IN') });
+
+    const isConfirmed = ['PO_CONFIRMED', 'Sent', 'Accepted', 'Shipped', 'In Transit', 'Delivered', 'Partially Received', 'Completed', 'COMPLETED'].includes(po.status);
+    timeline.push({ name: 'PO Confirmed', done: isConfirmed, date: isConfirmed ? 'Yes' : 'Pending' });
+
+    const hasGRN = (po.grns && po.grns.length > 0) || ['Partially Received', 'Completed', 'COMPLETED', 'PARTIALLY_RECEIVED'].includes(po.status);
+    timeline.push({ name: 'GRN Recorded', done: hasGRN, date: hasGRN ? 'Yes' : 'Pending' });
+
+    const isCompleted = po.status === 'Completed' || po.status === 'Closed' || po.status === 'COMPLETED';
+    timeline.push({ name: 'Completed', done: isCompleted, date: isCompleted ? new Date(po.updatedAt).toLocaleDateString('en-IN') : 'Pending' });
+
+    return timeline;
+  };
+
+  // Load controllers
+  const {
+    purchaseOrders,
+    setPurchaseOrders,
+    suppliers,
+    medicines,
+    poSupplier, setPoSupplier,
+    poDeliveryDate, setPoDeliveryDate,
+    poPaymentTerms, setPoPaymentTerms,
+    poCommunicationMethod, setPoCommunicationMethod,
+    sendPO,
+    supplierAcceptPO,
+    supplierRejectPO,
+    closePO,
+    handleCreatePO,
+    poMode, setPoMode,
+    linkedPRId, setLinkedPRId,
+    prApprovedItems, setPrApprovedItems,
+    handleCreatePOFromPR,
+    shipments,
+    completedPOs,
+    completedGRNs,
+    loadingHistory,
+    handleCreateShipment,
+    handleUpdateShipmentStatus,
+    refreshHistory
+  } = usePurchaseController(role);
+
+  const {
+    purchaseRequests,
+    newPR, setNewPR,
+    addPRItem,
+    removePRItem,
+    updatePRItem,
+    handleCreateRequest,
+    handleAutoCreatePR,
+    handleApprovePR,
+    handleRejectPR
+  } = usePurchaseRequestController(role);
+
+  const {
+    goodsReceipts,
+    pendingGRNOrders,
+    selectedPOId, setSelectedPOId,
+    selectedShipmentId, setSelectedShipmentId,
+    grnItems, setGrnItems,
+    receivedBy, setReceivedBy,
+    invoiceNumber, setInvoiceNumber,
+    loadPOItems,
+    updateGrnItem,
+    handleSubmitGRN
+  } = useGRNController();
+
+  // Navigation states for the 13 required pages
+  const [currentTab, setCurrentTab] = useState('dashboard'); // dashboard, pr, po, shipments, grn, completed
+  const [currentSubView, setCurrentSubView] = useState('list'); // list, create, details
+  
+  // Selection states
+  const [selectedPRId, setSelectedPRId] = useState(null);
+  const [selectedPOIdState, setSelectedPOIdState] = useState(null);
+  const [selectedGRNIdState, setSelectedGRNIdState] = useState(null);
+  const [selectedShipmentIdState, setSelectedShipmentIdState] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [directMedicineId, setDirectMedicineId] = useState('');
+
+  // Toast hook & Low-Stock dashboard states
+  const { toasts, toast, confirm, dismiss, resolveConfirm } = useToast();
+  const [dashboardFilter, setDashboardFilter] = useState('Pending'); // 'Pending', 'PO Generated', 'Completed'
+  const [lowStockItems, setLowStockItems] = useState([]);
+  const [loadingLowStock, setLoadingLowStock] = useState(false);
+
+  const fetchLowStock = useCallback(async () => {
+    setLoadingLowStock(true);
+    try {
+      const res = await purchaseAPI.getLowStock();
+      if (res && res.success) {
+        setLowStockItems(res.data);
+      }
+    } catch (err) {
+      console.error('Error fetching low stock:', err);
+      toast.error('Failed to load low-stock medicines: ' + err.message);
+    } finally {
+      setLoadingLowStock(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    fetchLowStock();
+  }, [fetchLowStock, purchaseOrders]);
+
+  // Keyboard-first navigation handler
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const activeEl = document.activeElement;
+      if (!activeEl) return;
+
+      const isInput = activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT';
+
+      // Enter key triggers click on focused elements
+      if (e.key === 'Enter') {
+        if (activeEl.classList.contains('kb-focusable')) {
+          if (activeEl.tagName !== 'INPUT' && activeEl.tagName !== 'TEXTAREA') {
+            e.preventDefault();
+            activeEl.click();
+          }
+        }
+        return;
+      }
+
+      // Arrow keys navigation
+      const focusables = Array.from(document.querySelectorAll('.kb-focusable'));
+      if (focusables.length === 0) return;
+
+      const currentIndex = focusables.indexOf(activeEl);
+
+      if (e.key === 'ArrowDown') {
+        // Move to the next data-kb-row element
+        e.preventDefault();
+        let targetIndex = currentIndex + 1;
+        while (targetIndex < focusables.length) {
+          const el = focusables[targetIndex];
+          if (el.hasAttribute('data-kb-row')) {
+            el.focus();
+            el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            break;
+          }
+          targetIndex++;
+        }
+      } else if (e.key === 'ArrowUp') {
+        // Move to the previous data-kb-row element
+        e.preventDefault();
+        let targetIndex = currentIndex - 1;
+        while (targetIndex >= 0) {
+          const el = focusables[targetIndex];
+          if (el.hasAttribute('data-kb-row')) {
+            el.focus();
+            el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            break;
+          }
+          targetIndex--;
+        }
+      } else if (e.key === 'ArrowRight') {
+        // Move to the next focusable column/button
+        if (isInput && activeEl.type !== 'button' && activeEl.type !== 'submit' && activeEl.type !== 'checkbox' && activeEl.type !== 'radio') {
+          return; // Let standard cursor movement work in text boxes
+        }
+        e.preventDefault();
+        const nextEl = focusables[currentIndex + 1];
+        if (nextEl) {
+          nextEl.focus();
+          nextEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+      } else if (e.key === 'ArrowLeft') {
+        // Move to the previous focusable column/button
+        if (isInput && activeEl.type !== 'button' && activeEl.type !== 'submit' && activeEl.type !== 'checkbox' && activeEl.type !== 'radio') {
+          return;
+        }
+        e.preventDefault();
+        const prevEl = focusables[currentIndex - 1];
+        if (prevEl) {
+          prevEl.focus();
+          prevEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Auto-focus helper to prevent focus loss on tab or view changes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const activeEl = document.activeElement;
+      if (!activeEl || activeEl === document.body) {
+        const first = document.querySelector('.kb-focusable');
+        if (first) {
+          first.focus();
+        }
+      }
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [currentTab, currentSubView, lowStockItems.length, purchaseOrders.length, goodsReceipts.length]);
+
+  const handleCreatePOFromLowStock = async (item) => {
+    const ok = await confirm(`Are you sure you want to create a Purchase Order for ${item.medicineName} with Suggested Qty: ${item.suggestedQuantity}?`);
+    if (!ok) return;
+
+    try {
+      setIsSaving(true);
+      const payload = {
+        medicineId: item.id,
+        qty: item.suggestedQuantity
+      };
+      const res = await purchaseAPI.createPOFromLowStock(payload);
+      if (res && res.success) {
+        toast.success(`Purchase Order ${res.data.id} created successfully.`);
+        if (refreshHistory) await refreshHistory();
+        fetchLowStock();
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to create PO: ' + err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleViewPO = (poId) => {
+    setSelectedPOIdState(poId);
+    resetNavigation('po', 'details');
+  };
+
+  const handleConfirmPO = async (poId) => {
+    const ok = await confirm(`Are you sure you want to confirm Purchase Order ${poId}?`);
+    if (!ok) return;
+
+    try {
+      setIsSaving(true);
+      const poToConfirm = purchaseOrders.find(p => p.id === poId);
+      if (poToConfirm) {
+        // Save items quantity updates to the backend first
+        await purchaseAPI.updatePO(poId, {
+          items: poToConfirm.items.map(it => ({
+            medicineId: it.medicineId,
+            qty: it.qty,
+            unitPrice: it.unitPrice,
+            tax: it.tax
+          }))
+        });
+      }
+      const res = await purchaseAPI.confirmPO(poId);
+      if (res && res.success) {
+        toast.success(`Purchase Order ${poId} confirmed and sent successfully.`);
+        setPurchaseOrders(prev => prev.map(p => p.id === poId ? res.data : p));
+        if (refreshHistory) await refreshHistory();
+        fetchLowStock();
+        setCurrentSubView('list');
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to confirm Purchase Order: ' + err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCancelPO = async (poId) => {
+    const ok = await confirm(`Are you sure you want to cancel Purchase Order ${poId}? This action cannot be undone.`);
+    if (!ok) return;
+
+    try {
+      setIsSaving(true);
+      const res = await purchaseAPI.cancelPO(poId);
+      if (res && res.success) {
+        toast.success(`Purchase Order ${poId} cancelled.`);
+        setPurchaseOrders(prev => prev.map(p => p.id === poId ? res.data : p));
+        if (refreshHistory) await refreshHistory();
+        fetchLowStock();
+        setCurrentSubView('list');
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to cancel Purchase Order: ' + err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleEditPOItemQty = (poId, medicineId, newQty) => {
+    const qtyVal = parseInt(newQty);
+    if (isNaN(qtyVal) || qtyVal <= 0) return;
+    setPurchaseOrders(prev => prev.map(po => {
+      if (po.id === poId) {
+        const updatedItems = po.items.map(it => {
+          if (it.medicineId === medicineId) {
+            const unitPriceVal = Number(it.unitPrice || 0);
+            const taxRateVal = Number(it.tax || 0);
+            const total = qtyVal * unitPriceVal * (1 + (taxRateVal / 100));
+            return { ...it, qty: qtyVal, total };
+          }
+          return it;
+        });
+        const newTotal = updatedItems.reduce((sum, it) => sum + Number(it.total || 0), 0);
+        return { ...po, items: updatedItems, total: newTotal };
+      }
+      return po;
+    }));
+  };
+
+  const handleIncreaseQty = (poId, medicineId) => {
+    const po = purchaseOrders.find(p => p.id === poId);
+    if (!po) return;
+    const item = po.items.find(it => it.medicineId === medicineId);
+    if (!item) return;
+    handleEditPOItemQty(poId, medicineId, item.qty + 1);
+  };
+
+  const handleDecreaseQty = (poId, medicineId) => {
+    const po = purchaseOrders.find(p => p.id === poId);
+    if (!po) return;
+    const item = po.items.find(it => it.medicineId === medicineId);
+    if (!item || item.qty <= 1) return;
+    handleEditPOItemQty(poId, medicineId, item.qty - 1);
+  };
+
+  const handleRemovePOItem = (poId, medicineId) => {
+    setPurchaseOrders(prev => prev.map(po => {
+      if (po.id === poId) {
+        const updatedItems = po.items.filter(it => it.medicineId !== medicineId);
+        const newTotal = updatedItems.reduce((sum, it) => sum + Number(it.total || 0), 0);
+        return { ...po, items: updatedItems, total: newTotal };
+      }
+      return po;
+    }));
+  };
+
+  const handleAddPOMedicine = (poId, medId) => {
+    if (!medId) return;
+    const med = medicines.find(m => m.id === medId);
+    if (!med) return;
+
+    setPurchaseOrders(prev => prev.map(po => {
+      if (po.id === poId) {
+        if (po.items?.some(it => it.medicineId === medId)) {
+          toast.error('This medicine is already in the Purchase Order.');
+          return po;
+        }
+
+        const qtyVal = 50;
+        const priceVal = Number(med.pricePerPiece) || 15.00;
+        const taxVal = Number(med.taxPercentage) || 0;
+        const itemTotal = qtyVal * priceVal * (1 + (taxVal / 100));
+
+        const newItem = {
+          medicineId: medId,
+          medicineName: med.name || med.medicineName,
+          qty: qtyVal,
+          unitPrice: priceVal,
+          tax: taxVal,
+          total: itemTotal,
+          receivedQty: 0,
+          damagedQty: 0,
+          cancelledQty: 0,
+          status: 'Pending'
+        };
+
+        const updatedItems = [...(po.items || []), newItem];
+        const newTotal = updatedItems.reduce((sum, it) => sum + Number(it.total || 0), 0);
+        return { ...po, items: updatedItems, total: newTotal };
+      }
+      return po;
+    }));
+  };
+
+  // Searches, filters, and paginations
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 8;
+
+  // Local Shipment form state
+  const [shipmentForm, setShipmentForm] = useState({
+    poId: '',
+    trackingId: '',
+    invoiceNumber: '',
+    items: []
+  });
+
+  // Local PR item approval choices
+  const [prItemApprovals, setPrItemApprovals] = useState({}); // { itemId: 'Approved' | 'Rejected' }
+
+
+
+  const handleGRNSubmitLocal = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const success = await handleSubmitGRN(toast, confirm);
+    if (success) {
+      if (fetchLowStock) fetchLowStock();
+      resetNavigation('completed');
+    }
+  };
+
+  // Reset pagination on filter or view change
+  const resetNavigation = (tab, subView = 'list') => {
+    setCurrentTab(tab);
+    setCurrentSubView(subView);
+    setSearchQuery('');
+    setStatusFilter('All');
+    setCurrentPage(1);
+  };
+
+  // Safe selection lookups with fallback checks to prevent white screen crashes
+  const selectedPR = useMemo(() => {
+    return purchaseRequests.find(p => p.id === selectedPRId) || null;
+  }, [purchaseRequests, selectedPRId]);
+
+  const selectedPO = useMemo(() => {
+    return purchaseOrders.find(p => p.id === selectedPOIdState) || 
+           completedPOs.find(p => p.id === selectedPOIdState) || null;
+  }, [purchaseOrders, completedPOs, selectedPOIdState]);
+
+  const selectedGRN = useMemo(() => {
+    return goodsReceipts.find(g => g.id === selectedGRNIdState) || 
+           completedGRNs.find(g => g.id === selectedGRNIdState) || null;
+  }, [goodsReceipts, completedGRNs, selectedGRNIdState]);
+
+  const selectedShipment = useMemo(() => {
+    return shipments.find(s => s.id === selectedShipmentIdState) || null;
+  }, [shipments, selectedShipmentIdState]);
+
+  const [prItemRemarks, setPrItemRemarks] = useState({});
+
+  // Auto-prefill item approval choices when selected PR changes
+  React.useEffect(() => {
+    if (selectedPR && selectedPR.items) {
+      const decisions = {};
+      selectedPR.items.forEach(it => {
+        decisions[it.id] = it.status || 'Pending';
+      });
+      setPrItemApprovals(decisions);
+    } else {
+      setPrItemApprovals({});
+    }
+  }, [selectedPR]);
+
+  // Alert & dashboard stats
+  const pendingRequestsCount = purchaseRequests.filter(r => r.status === 'Pending').length;
+  const approvedRequestsCount = purchaseRequests.filter(r => r.status === 'Approved' || r.status === 'Partially Approved').length;
+  const inProgressOrdersCount = purchaseOrders.filter(p => ['Sent', 'Accepted', 'Shipped', 'In Transit', 'Delivered'].includes(p.status)).length;
+  const pendingShipmentsCount = shipments.filter(s => s.status !== 'Delivered').length;
+  const pendingGRNCount = pendingGRNOrders.length;
+  const partiallyReceivedCount = purchaseOrders.filter(p => p.status === 'Partially Received').length;
+  const completedPOCount = completedPOs.length;
+
+  // Filter low stock medicines from master inventory list (read-only alerts)
+  const lowStockAlerts = useMemo(() => {
+    return medicines
+      .filter(m => Number(m.stock ?? 0) <= Number(m.minStock ?? 10))
+      .map(m => ({
+        id: `LSA-${m.id.slice(-4).toUpperCase()}`,
+        medicineId: m.id,
+        medicineName: m.name || m.medicineName,
+        currentStock: Number(m.stock ?? 0),
+        reorderLevel: Number(m.minStock ?? 10),
+        alertDate: new Date().toLocaleDateString('en-IN')
+      }));
+  }, [medicines]);
+
+  // Color helper for statuses
+  const getStatusBadgeClass = (status) => {
+    switch (status) {
+      case 'Approved':
+      case 'Verified & Approved':
+        return 'text-emerald-700 bg-emerald-50 border-emerald-250';
+      case 'Completed':
+        return 'text-emerald-800 bg-emerald-100 border-emerald-300';
+      case 'Rejected':
+      case 'Cancelled':
+      case 'Damaged':
+        return 'text-rose-700 bg-rose-50 border-rose-250';
+      case 'Pending':
+      case 'Draft':
+      case 'Submitted':
+        return 'text-amber-700 bg-amber-50 border-amber-250';
+      case 'Partially Approved':
+      case 'Partially Received':
+        return 'text-indigo-700 bg-indigo-50 border-indigo-250';
+      case 'Sent':
+      case 'Supplier Accepted':
+      case 'Packed':
+      case 'Shipped':
+      case 'In Transit':
+      case 'Delivered':
+        return 'text-blue-700 bg-blue-50 border-blue-250';
+      default:
+        return 'text-slate-600 bg-slate-50 border-slate-200';
+    }
+  };
+
+  // PO Items status actions (item-level receiving status update)
+  const handleUpdatePOItemStatus = async (poId, medicineId, action) => {
+    if (!window.confirm(`Are you sure you want to mark this item as ${action}?`)) return;
+    try {
+      const po = purchaseOrders.find(p => p.id === poId);
+      if (!po) return;
+
+      const updatedItems = po.items.map(item => {
+        if (item.medicineId === medicineId) {
+          const qty = item.qty;
+          let rec = item.receivedQty || 0;
+          let dmg = item.damagedQty || 0;
+          let can = item.cancelledQty || 0;
+          let status = item.status;
+
+          if (action === 'Received') {
+            rec = qty;
+            status = 'Received';
+          } else if (action === 'Cancelled') {
+            can = qty - rec;
+            status = 'Cancelled';
+          } else if (action === 'Damaged') {
+            dmg = qty - rec;
+            status = 'Damaged';
+          }
+
+          return { ...item, receivedQty: rec, damagedQty: dmg, cancelledQty: can, status };
+        }
+        return item;
+      });
+
+      // Calculate new PO progress and status
+      const totalOrdered = updatedItems.reduce((sum, it) => sum + it.qty, 0);
+      const totalReceived = updatedItems.reduce((sum, it) => sum + it.receivedQty, 0);
+      const totalCancelled = updatedItems.reduce((sum, it) => sum + it.cancelledQty, 0);
+      
+      let newPOStatus = po.status;
+      if (totalReceived + totalCancelled >= totalOrdered) {
+        newPOStatus = 'Completed';
+      } else if (totalReceived > 0) {
+        newPOStatus = 'Partially Received';
+      }
+
+      const response = await purchaseAPI.updatePO(poId, {
+        status: newPOStatus,
+        items: updatedItems.map(it => ({
+          medicineId: it.medicineId,
+          qty: it.qty,
+          receivedQty: it.receivedQty,
+          damagedQty: it.damagedQty,
+          cancelledQty: it.cancelledQty,
+          status: it.status,
+          unitPrice: Number(it.unitPrice)
+        }))
+      });
+
+      if (response && response.success) {
+        setPurchaseOrders(prev => prev.map(p => p.id === poId ? response.data : p));
+        alert(`Item status updated to ${action}. PO status is: ${newPOStatus}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error updating item level status: ' + err.message);
+    }
+  };
+
+  // Timeline Step Helper
+  const timelineSteps = ['Draft', 'Sent', 'Supplier Accepted', 'Packed', 'Shipped', 'In Transit', 'Delivered', 'Completed'];
+
+  return (
+    <ErrorBoundary>
+      <div className="space-y-6 text-left font-sans">
+        
+        {/* HEADER SECTION */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-100 pb-4">
+          <div>
+            <h3 className="text-base font-extrabold text-slate-800 uppercase flex items-center gap-2">
+              Procurement & Orders Dashboard Desk
+              <button onClick={() => setSchemaModalTable('purchase_request')} className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600 transition cursor-pointer" title="View Database Tables Schema">
+                <Database size={14} />
+              </button>
+            </h3>
+            <p className="text-xs text-slate-400 font-medium">Lifecycle tracking: alerts → purchase request → approval → PO → shipping → receiving → completed ledger</p>
+          </div>
+
+          <div className="flex gap-2">
+            <button onClick={() => { refreshHistory(); alert('Data re-fetched from database.'); }} className="p-2 text-slate-500 hover:text-slate-700 bg-slate-50 border border-slate-200 rounded-xl transition cursor-pointer flex items-center gap-1 text-xs font-bold" title="Sync database data">
+              <RefreshCw size={13} /> Sync
+            </button>
+          </div>
+        </div>
+
+        {/* 13 MODULE PAGE TAB-NAVIGATION */}
+        {(() => {
+          const enablePRWorkflow = false;
+          const enableShipmentTracking = false;
+          return (
+            <div className="flex flex-wrap items-center gap-1.5 bg-slate-150 p-1.5 rounded-2xl w-full">
+              <button onClick={() => resetNavigation('dashboard')} tabIndex={0}
+                className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'dashboard' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                <TrendingUp size={13} /> Dashboard
+              </button>
+              {enablePRWorkflow && (
+                <button onClick={() => resetNavigation('pr')} tabIndex={0}
+                  className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'pr' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                  <ClipboardList size={13} /> Purchase Requests ({pendingRequestsCount})
+                </button>
+              )}
+              <button onClick={() => resetNavigation('po')} tabIndex={0}
+                className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'po' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                <FileText size={13} /> Purchase Orders ({inProgressOrdersCount})
+              </button>
+              {enableShipmentTracking && (
+                <button onClick={() => resetNavigation('shipments')} tabIndex={0}
+                  className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'shipments' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                  <Truck size={13} /> Shipment Track ({pendingShipmentsCount})
+                </button>
+              )}
+              <button onClick={() => resetNavigation('grn')} tabIndex={0}
+                className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'grn' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                <PackageCheck size={13} /> GRN Receivables ({pendingGRNCount})
+              </button>
+              <button onClick={() => resetNavigation('completed')} tabIndex={0}
+                className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'completed' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                <CheckCircle size={13} /> Procurement History
+              </button>
+            </div>
+          );
+        })()}
+
+        {/* ─── TAB 1: PROCUREMENT DASHBOARD ─── */}
+        {currentTab === 'dashboard' && (
+          <div className="space-y-6 animate-fade-in">
+            {/* PROCUREMENT SUMMARY CARDS */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {/* Low Stock Pending → Dashboard Pending filter */}
+              <div
+                onClick={() => setDashboardFilter('Pending')}
+                tabIndex={0}
+                onKeyDown={(e) => e.key === 'Enter' && setDashboardFilter('Pending')}
+                className="bg-white border border-slate-200 p-4 rounded-2xl flex flex-col justify-between shadow-sm cursor-pointer hover:border-rose-300 hover:shadow-md transition-all group kb-focusable focus:ring-2 focus:ring-rose-400 focus:outline-none"
+              >
+                <span className="text-slate-400 text-[10px] font-black uppercase">Low Stock Pending</span>
+                <span className="text-2xl font-black text-rose-600 block pt-1">
+                  {lowStockItems.filter(item => item.status === 'Pending Approval').length}
+                </span>
+                <span className="text-[9px] font-bold text-slate-300 group-hover:text-rose-400 uppercase mt-2 flex items-center gap-1 transition-colors">
+                  View Details <ArrowRight size={10} className="group-hover:translate-x-0.5 transition-transform" />
+                </span>
+              </div>
+
+              {/* Purchase Orders → PO tab */}
+              <div
+                onClick={() => resetNavigation('po')}
+                tabIndex={0}
+                onKeyDown={(e) => e.key === 'Enter' && resetNavigation('po')}
+                className="bg-white border border-slate-200 p-4 rounded-2xl flex flex-col justify-between shadow-sm cursor-pointer hover:border-blue-300 hover:shadow-md transition-all group kb-focusable focus:ring-2 focus:ring-blue-400 focus:outline-none"
+              >
+                <span className="text-slate-400 text-[10px] font-black uppercase">Purchase Orders</span>
+                <span className="text-2xl font-black text-blue-600 block pt-1">
+                  {purchaseOrders.length}
+                </span>
+                <span className="text-[9px] font-bold text-slate-300 group-hover:text-blue-400 uppercase mt-2 flex items-center gap-1 transition-colors">
+                  View Details <ArrowRight size={10} className="group-hover:translate-x-0.5 transition-transform" />
+                </span>
+              </div>
+
+              {/* GRN Receivables → GRN tab */}
+              <div
+                onClick={() => resetNavigation('grn')}
+                tabIndex={0}
+                onKeyDown={(e) => e.key === 'Enter' && resetNavigation('grn')}
+                className="bg-white border border-slate-200 p-4 rounded-2xl flex flex-col justify-between shadow-sm cursor-pointer hover:border-amber-300 hover:shadow-md transition-all group kb-focusable focus:ring-2 focus:ring-amber-400 focus:outline-none"
+              >
+                <span className="text-slate-400 text-[10px] font-black uppercase">GRN Receivables</span>
+                <span className="text-2xl font-black text-amber-600 block pt-1">
+                  {pendingGRNCount}
+                </span>
+                <span className="text-[9px] font-bold text-slate-300 group-hover:text-amber-400 uppercase mt-2 flex items-center gap-1 transition-colors">
+                  View Details <ArrowRight size={10} className="group-hover:translate-x-0.5 transition-transform" />
+                </span>
+              </div>
+
+              {/* Procurement History → Completed tab */}
+              <div
+                onClick={() => resetNavigation('completed')}
+                tabIndex={0}
+                onKeyDown={(e) => e.key === 'Enter' && resetNavigation('completed')}
+                className="bg-white border border-slate-200 p-4 rounded-2xl flex flex-col justify-between shadow-sm cursor-pointer hover:border-emerald-300 hover:shadow-md transition-all group kb-focusable focus:ring-2 focus:ring-emerald-400 focus:outline-none"
+              >
+                <span className="text-slate-400 text-[10px] font-black uppercase">Procurement History</span>
+                <span className="text-2xl font-black text-emerald-600 block pt-1">
+                  {completedPOs.length}
+                </span>
+                <span className="text-[9px] font-bold text-slate-300 group-hover:text-emerald-400 uppercase mt-2 flex items-center gap-1 transition-colors">
+                  View Details <ArrowRight size={10} className="group-hover:translate-x-0.5 transition-transform" />
+                </span>
+              </div>
+            </div>
+
+            {/* DASHBOARD TAB FILTERS */}
+            <div className="flex items-center justify-between border-b border-slate-200 gap-4">
+              {/* Status Tabs - Left Side */}
+              <div className="flex items-center gap-1">
+                {['Pending', 'PO Generated', 'Completed'].map(filterTab => {
+                  const targetStatus = filterTab === 'Pending' ? 'Pending Approval' : filterTab === 'PO Generated' ? 'PO Generated' : 'Completed';
+                  const count = lowStockItems.filter(item => item.status === targetStatus).length;
+                  const isActive = dashboardFilter === filterTab;
+                  return (
+                    <button
+                      key={filterTab}
+                      onClick={() => setDashboardFilter(filterTab)}
+                      tabIndex={0}
+                      className={`pb-3 px-3 text-xs font-black uppercase tracking-wider transition-all relative cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${
+                        isActive ? 'text-blue-600 border-b-2 border-blue-600 font-extrabold' : 'text-slate-400 hover:text-slate-600'
+                      }`}
+                    >
+                      {filterTab} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Date Range Filter - Right Side */}
+              <div className="flex items-center gap-2 pb-2">
+                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
+                  {/* Start Date: type or pick */}
+                  <div className="flex items-center gap-1 relative">
+                    <input
+                      type="text"
+                      value={formatDateDisplay(filterStartDate)}
+                      onChange={(e) => {
+                        const parsed = parseTypedDate(e.target.value);
+                        if (parsed) setFilterStartDate(parsed);
+                        else if (e.target.value === '') setFilterStartDate('');
+                      }}
+                      placeholder="DD/MM/YYYY"
+                      tabIndex={0}
+                      className="kb-focusable bg-transparent text-xs font-semibold text-slate-600 border-none outline-none focus:ring-0 w-[88px] placeholder:text-slate-300"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => startDateRef.current?.showPicker?.()}
+                      tabIndex={0}
+                      title="Pick from calendar"
+                      className="text-slate-400 hover:text-blue-500 transition-colors kb-focusable focus:outline-none focus:text-blue-500 cursor-pointer"
+                    >
+                      <Calendar size={13} />
+                    </button>
+                    <input
+                      ref={startDateRef}
+                      type="date"
+                      value={filterStartDate || ''}
+                      onChange={(e) => setFilterStartDate(e.target.value)}
+                      className="absolute opacity-0 w-0 h-0 pointer-events-none"
+                      tabIndex={-1}
+                    />
+                  </div>
+
+                  <span className="text-[10px] font-bold text-slate-300 uppercase">to</span>
+
+                  {/* End Date: type or pick */}
+                  <div className="flex items-center gap-1 relative">
+                    <input
+                      type="text"
+                      value={formatDateDisplay(filterEndDate)}
+                      onChange={(e) => {
+                        const parsed = parseTypedDate(e.target.value);
+                        if (parsed) setFilterEndDate(parsed);
+                        else if (e.target.value === '') setFilterEndDate('');
+                      }}
+                      placeholder="DD/MM/YYYY"
+                      tabIndex={0}
+                      className="kb-focusable bg-transparent text-xs font-semibold text-slate-600 border-none outline-none focus:ring-0 w-[88px] placeholder:text-slate-300"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => endDateRef.current?.showPicker?.()}
+                      tabIndex={0}
+                      title="Pick from calendar"
+                      className="text-slate-400 hover:text-blue-500 transition-colors kb-focusable focus:outline-none focus:text-blue-500 cursor-pointer"
+                    >
+                      <Calendar size={13} />
+                    </button>
+                    <input
+                      ref={endDateRef}
+                      type="date"
+                      value={filterEndDate || ''}
+                      onChange={(e) => setFilterEndDate(e.target.value)}
+                      className="absolute opacity-0 w-0 h-0 pointer-events-none"
+                      tabIndex={-1}
+                    />
+                  </div>
+                </div>
+
+                {(filterStartDate || filterEndDate) && (
+                  <button
+                    onClick={() => { setFilterStartDate(''); setFilterEndDate(''); }}
+                    tabIndex={0}
+                    className="flex items-center gap-1 px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-500 hover:text-rose-600 border border-rose-200 rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all kb-focusable focus:ring-2 focus:ring-rose-400 focus:outline-none"
+                  >
+                    <X size={11} /> Clear
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* LOW STOCK ALERTS LIST */}
+            <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-3 shadow-sm">
+              <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                <h4 className="text-xs font-black text-slate-800 uppercase flex items-center gap-1.5">
+                  <AlertTriangle size={14} className="text-rose-500 animate-bounce" /> Low Stock Medicines List
+                </h4>
+                <span className="text-[10px] text-slate-400 font-bold uppercase">
+                  {loadingLowStock ? 'Loading...' : `${lowStockItems.filter(item => {
+                    const targetStatus = dashboardFilter === 'Pending' ? 'Pending Approval' : dashboardFilter === 'PO Generated' ? 'PO Generated' : 'Completed';
+                    return item.status === targetStatus;
+                  }).length} Items`}
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-400 uppercase font-black text-[9px] border-b border-slate-200">
+                      <th className="py-2.5 px-3">Medicine Name</th>
+                      <th className="py-2.5 px-3">Medicine Code</th>
+                      <th className="py-2.5 px-3 text-center">Current Stock</th>
+                      <th className="py-2.5 px-3 text-center">Reorder Level</th>
+                      <th className="py-2.5 px-3 text-center">Suggested Order Qty</th>
+                      <th className="py-2.5 px-3">Default Supplier</th>
+                      <th className="py-2.5 px-3 text-center">Status</th>
+                      <th className="py-2.5 px-3 text-center">Last Ordered Date</th>
+                      <th className="py-2.5 px-3 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lowStockItems
+                      .filter(item => {
+                        const targetStatus = dashboardFilter === 'Pending' ? 'Pending Approval' : dashboardFilter === 'PO Generated' ? 'PO Generated' : 'Completed';
+                        if (item.status !== targetStatus) return false;
+                        if (filterStartDate) {
+                          const orderDate = new Date(item.lastOrderedDate);
+                          if (orderDate < new Date(filterStartDate)) return false;
+                        }
+                        if (filterEndDate) {
+                          const orderDate = new Date(item.lastOrderedDate);
+                          if (orderDate > new Date(filterEndDate)) return false;
+                        }
+                        return true;
+                      })
+                      .map(item => {
+                        return (
+                          <tr key={item.id} tabIndex={0} data-kb-row className="border-b border-slate-100 hover:bg-slate-50/50 kb-focusable focus:bg-blue-50/60 focus:ring-1 focus:ring-blue-300 focus:outline-none">
+                            <td className="py-3.5 px-3 font-bold text-slate-805">{item.medicineName}</td>
+                            <td className="py-3.5 px-3 font-mono font-bold text-slate-500">{item.medicineCode}</td>
+                            <td className="py-3.5 px-3 text-center font-black text-rose-600">{item.stockQuantity} units</td>
+                            <td className="py-3.5 px-3 text-center font-bold text-slate-500">{item.reorderLevel} units</td>
+                            <td className="py-3.5 px-3 text-center font-mono font-bold text-blue-700">{item.suggestedQuantity} units</td>
+                            <td className="py-3.5 px-3 font-semibold text-slate-650">{item.defaultSupplierName}</td>
+                            <td className="py-3.5 px-3 text-center">
+                              <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${
+                                item.status === 'Pending Approval' ? 'text-rose-700 bg-rose-50 border-rose-200' :
+                                item.status === 'PO Generated' ? 'text-blue-700 bg-blue-50 border-blue-200' :
+                                'text-emerald-700 bg-emerald-50 border-emerald-200'
+                              }`}>
+                                {item.status}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-3 text-center font-medium text-slate-400">
+                              {item.lastOrderedDate ? new Date(item.lastOrderedDate).toLocaleDateString('en-IN') : 'N/A'}
+                            </td>
+                            <td className="py-3.5 px-3 text-right">
+                              {item.status === 'Pending Approval' ? (
+                                <button
+                                  onClick={() => handleCreatePOFromLowStock(item)}
+                                  disabled={isSaving}
+                                  tabIndex={0}
+                                  data-kb-col
+                                  className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[9px] font-black uppercase transition cursor-pointer disabled:opacity-50 kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                >
+                                  Approve & Create PO
+                                </button>
+                              ) : item.status === 'PO Generated' ? (
+                                <button
+                                  onClick={() => handleViewPO(item.poId)}
+                                  tabIndex={0}
+                                  data-kb-col
+                                  className="px-3 py-1 bg-slate-600 hover:bg-slate-700 text-white rounded-lg text-[9px] font-black uppercase transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                >
+                                  View PO
+                                </button>
+                              ) : (
+                                <span className="text-[10px] text-emerald-600 font-extrabold uppercase">Completed</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    {lowStockItems.filter(item => dashboardFilter === 'PO Generated' ? item.status === 'PO Generated' : item.status === dashboardFilter).length === 0 && (
+                      <tr>
+                        <td colSpan="7" className="py-8 text-center text-slate-400 italic">No items found in this section.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── TAB 2: PURCHASE REQUESTS ─── */}
+        {currentTab === 'pr' && (
+          <div className="space-y-6 animate-fade-in">
+            {/* SUB-VIEW: LIST VIEW */}
+            {currentSubView === 'list' && (
+              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-3">
+                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                    <ClipboardList size={14} className="text-blue-600" /> Purchase Request Register
+                  </h4>
+                  <button onClick={() => setCurrentSubView('create')} className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase transition cursor-pointer shadow-sm">
+                    <Plus size={14} /> New Purchase Request
+                  </button>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-400 uppercase font-black text-[9px] border-b border-slate-200">
+                        <th className="py-2.5 px-3">PR ID</th>
+                        <th className="py-2.5 px-3">PR Date</th>
+                        <th className="py-2.5 px-3">Requested By</th>
+                        <th className="py-2.5 px-3">Priority</th>
+                        <th className="py-2.5 px-3 text-center">Items Count</th>
+                        <th className="py-2.5 px-3 text-center">Status</th>
+                        <th className="py-2.5 px-3 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {purchaseRequests.map(pr => (
+                        <tr key={pr.id} className="border-b border-slate-100 hover:bg-slate-50/50">
+                          <td className="py-3 px-3 font-mono font-bold text-[10px] text-slate-700">{pr.id}</td>
+                          <td className="py-3 px-3 text-slate-500 font-semibold">{pr.requestDate}</td>
+                          <td className="py-3 px-3 font-bold text-slate-700">{pr.requestedBy || 'Staff'}</td>
+                          <td className="py-3 px-3">
+                            <span className={`px-2 py-0.5 rounded text-[8px] font-black border ${pr.priority === 'High' ? 'text-rose-700 bg-rose-50 border-rose-200' : 'text-slate-600 bg-slate-50 border-slate-200'}`}>{pr.priority}</span>
+                          </td>
+                          <td className="py-3 px-3 text-center font-bold">{pr.items?.length || 0}</td>
+                          <td className="py-3 px-3 text-center">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[8px] font-black border ${getStatusBadgeClass(pr.status)}`}>{pr.status}</span>
+                          </td>
+                          <td className="py-3 px-3 text-right">
+                            <button
+                              onClick={() => {
+                                setSelectedPRId(pr.id);
+                                // Prefill item approval checks with current database values
+                                const decisions = {};
+                                pr.items.forEach(it => { decisions[it.id] = it.status || 'Pending'; });
+                                setPrItemApprovals(decisions);
+                                setCurrentSubView('details');
+                              }}
+                              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg text-[9px] font-black uppercase text-slate-700 transition cursor-pointer"
+                            >
+                              Details & Approve
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* SUB-VIEW: CREATE VIEW */}
+            {currentSubView === 'create' && (
+              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-4">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                  <h4 className="text-xs font-black text-slate-805 uppercase tracking-wider flex items-center gap-1.5">
+                    <Plus size={14} className="text-blue-650" /> Raise Purchase Request
+                  </h4>
+                  <button onClick={() => setCurrentSubView('list')} className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400">
+                    <X size={15} />
+                  </button>
+                </div>
+
+                <form onSubmit={handleCreateRequest} className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Requested By</label>
+                      <input type="text" value={role || 'Staff Pharmacist'} disabled className="w-full p-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-500" />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Priority</label>
+                      <select value={newPR.priority} onChange={(e) => setNewPR({ ...newPR, priority: e.target.value })}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 cursor-pointer">
+                        <option value="High">High (Urgent)</option>
+                        <option value="Medium">Medium</option>
+                        <option value="Low">Low</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Notes / Overall Reason</label>
+                      <input type="text" placeholder="e.g. Monthly stock replenishment..." value={newPR.remarks} onChange={(e) => setNewPR({ ...newPR, remarks: e.target.value })}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700" />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">Medicines Table List</label>
+                    {newPR.items.map((item, index) => (
+                      <div key={index} className="flex flex-col md:flex-row gap-2 items-center bg-slate-50 border border-slate-150 p-3 rounded-xl">
+                        <div className="w-full md:flex-1">
+                          <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Medicine *</label>
+                          <SearchableDropdown
+                            options={medicines.map(m => ({ id: m.id, name: `${m.name || m.medicineName} (Stock: ${m.stock})` }))}
+                            value={item.medicineId}
+                            onChange={(val) => updatePRItem(index, 'medicineId', val)}
+                            placeholder="Type to search medicine..."
+                            inputClass="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                          />
+                        </div>
+                        <div className="w-full md:w-32">
+                          <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Quantity *</label>
+                          <input type="number" placeholder="Count" min="1" value={item.requestedQty} onChange={(e) => updatePRItem(index, 'requestedQty', e.target.value)}
+                            className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold" required />
+                        </div>
+                        <div className="w-full md:w-28">
+                          <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Unit</label>
+                          <select value={item.unit} onChange={(e) => updatePRItem(index, 'unit', e.target.value)}
+                            className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold cursor-pointer">
+                            <option value="Boxes">Boxes</option>
+                            <option value="Strips">Strips</option>
+                            <option value="Bottles">Bottles</option>
+                            <option value="Vials">Vials</option>
+                          </select>
+                        </div>
+                        <div className="w-full md:flex-1">
+                          <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Item Remarks</label>
+                          <input type="text" placeholder="Remarks..." value={item.remarks} onChange={(e) => updatePRItem(index, 'remarks', e.target.value)}
+                            className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs" />
+                        </div>
+                        <div className="pt-4">
+                          {newPR.items.length > 1 && (
+                            <button type="button" onClick={() => removePRItem(index)} className="p-2 text-rose-600 hover:bg-rose-50 rounded-lg transition">
+                              <Trash size={14} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+
+                    <button type="button" onClick={addPRItem} className="flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold uppercase transition cursor-pointer">
+                      <Plus size={12} /> Add Medicine
+                    </button>
+                  </div>
+
+                  <div className="flex gap-2 justify-end border-t border-slate-100 pt-3">
+                    <button type="button" onClick={() => {
+                      alert('Draft saved locally.');
+                      setCurrentSubView('list');
+                    }} className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-black uppercase cursor-pointer">Save Draft</button>
+                    <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase shadow-sm cursor-pointer">Submit PR</button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* SUB-VIEW: DETAILS / APPROVAL VIEW */}
+            {currentSubView === 'details' && selectedPR && (
+              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-5">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                  <h4 className="text-xs font-black text-slate-805 uppercase tracking-wider">Purchase Request Details: {selectedPR.id}</h4>
+                  <button onClick={() => setCurrentSubView('list')} className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400">
+                    <X size={15} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-50 p-4 rounded-xl text-xs">
+                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Request Date</span><span className="font-bold">{selectedPR.requestDate}</span></div>
+                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Requested By</span><span className="font-bold">{selectedPR.requestedBy || 'Staff'}</span></div>
+                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Overall Status</span><span className={`px-2 py-0.5 rounded-full font-black text-[9px] border ${getStatusBadgeClass(selectedPR.status)}`}>{selectedPR.status}</span></div>
+                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Notes</span><span className="font-bold text-slate-600">{selectedPR.remarks || 'None'}</span></div>
+                </div>
+
+                <div className="space-y-3">
+                  <span className="block text-[10px] font-black uppercase text-slate-500 border-b border-slate-100 pb-1">Items Approval Decisions</span>
+                  <div className="space-y-2">
+                    {selectedPR.items.map((item, idx) => (
+                      <div key={idx} className="flex justify-between items-center p-3 border border-slate-150 rounded-xl hover:bg-slate-50/50">
+                        <div className="text-xs">
+                          <span className="font-bold text-slate-800">{item.medicineName}</span>
+                          <span className="text-slate-400 block text-[10px]">Requested: {item.requestedQty} {item.unit} | Status: <b className={item.status === 'Approved' ? 'text-emerald-600' : item.status === 'Rejected' ? 'text-rose-600' : 'text-amber-600'}>{item.status}</b></span>
+                        </div>
+
+                        {item.status === 'Pending' ? (
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => {
+                                setPrItemApprovals({ ...prItemApprovals, [item.id]: 'Approved' });
+                                setPrItemRemarks({ ...prItemRemarks, [item.id]: '' });
+                              }}
+                              className={`px-2.5 py-1 text-[9px] font-bold uppercase rounded-lg border transition ${prItemApprovals[item.id] === 'Approved' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-600 border-slate-200'}`}
+                            >
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => {
+                                const reason = window.prompt(`Enter rejection reason for ${item.medicineName || 'item'}:`);
+                                if (reason === null) return;
+                                setPrItemApprovals({ ...prItemApprovals, [item.id]: 'Rejected' });
+                                setPrItemRemarks({ ...prItemRemarks, [item.id]: reason || 'Rejected by manager' });
+                              }}
+                              className={`px-2.5 py-1 text-[9px] font-bold uppercase rounded-lg border transition ${prItemApprovals[item.id] === 'Rejected' ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-slate-600 border-slate-200'}`}
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        ) : (
+                          <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${getStatusBadgeClass(item.status)}`}>{item.status}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {selectedPR.items.some(item => item.status === 'Pending') && (
+                  <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+                    <button
+                      onClick={() => {
+                        const reason = window.prompt("Enter rejection reason for entire PR:");
+                        if (reason === null) return;
+                        handleRejectPR(selectedPR.id, reason);
+                      }}
+                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black uppercase transition cursor-pointer"
+                    >
+                      Reject Entire PR
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const payload = Object.keys(prItemApprovals)
+                          .filter(itemId => {
+                            const originalItem = selectedPR.items.find(i => String(i.id) === String(itemId));
+                            return originalItem && originalItem.status === 'Pending';
+                          })
+                          .map(itemId => ({
+                            itemId,
+                            status: prItemApprovals[itemId],
+                            remarks: prItemRemarks[itemId] || ''
+                          }))
+                          .filter(p => p.status === 'Approved' || p.status === 'Rejected');
+                        
+                        if (payload.length === 0) {
+                          alert('Please select approval or rejection for at least one pending item.');
+                          return;
+                        }
+                        const updatedPR = await handleApprovePR(selectedPR.id, payload);
+                        if (updatedPR) {
+                          const approvedItems = updatedPR.items.filter(i => i.status === 'Approved');
+                          if (approvedItems.length > 0) {
+                            setPoMode('PR');
+                            setLinkedPRId(updatedPR.id);
+                            setPrApprovedItems(approvedItems);
+                            resetNavigation('po', 'create');
+                          } else {
+                            resetNavigation('pr', 'list');
+                          }
+                        }
+                      }}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase transition cursor-pointer"
+                    >
+                      Submit Decisions
+                    </button>
+                  </div>
+                )}
+
+                {(selectedPR.status === 'Approved' || selectedPR.status === 'Partially Approved') && (
+                  <div className="flex justify-end border-t border-slate-100 pt-3">
+                    <button
+                      onClick={() => {
+                        setPoMode('PR');
+                        setLinkedPRId(selectedPR.id);
+                        setPrApprovedItems(selectedPR.items.filter(i => i.status === 'Approved'));
+                        resetNavigation('po', 'create');
+                      }}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase transition cursor-pointer"
+                    >
+                      Generate Purchase Order →
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ─── TAB 3: PURCHASE ORDERS ─── */}
+        {currentTab === 'po' && (
+          <div className="space-y-6 animate-fade-in">
+            {/* SUB-VIEW: LIST VIEW */}
+            {currentSubView === 'list' && (
+              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-3">
+                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                    <FileText size={14} className="text-blue-600" /> Purchase Orders Registry
+                  </h4>
+                  <button onClick={() => setCurrentSubView('create')} tabIndex={0} className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase transition cursor-pointer shadow-sm kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    <Plus size={14} /> Create Purchase Order
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {purchaseOrders.map(po => {
+                    const statusDisplay = getPOStatusDisplay(po.status);
+                    const totalItems = po.items?.length || 0;
+                    const dateStr = new Date(po.createdAt).toLocaleDateString('en-IN');
+                    const timeStr = new Date(po.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+                    
+                    return (
+                      <div key={po.id} tabIndex={0} data-kb-row className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-4 kb-focusable focus:ring-2 focus:ring-blue-400 focus:bg-slate-50/50 focus:outline-none">
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-start">
+                            <span className="font-mono font-black text-xs text-blue-700">{po.id}</span>
+                            <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${getStatusBadgeClass(po.status)}`}>
+                              {statusDisplay}
+                            </span>
+                          </div>
+
+                          <div className="space-y-1.5 text-xs">
+                            <div className="flex justify-between text-slate-400">
+                              <span>Date:</span>
+                              <span className="font-bold text-slate-700">{dateStr}</span>
+                            </div>
+                            <div className="flex justify-between text-slate-400">
+                              <span>Time:</span>
+                              <span className="font-bold text-slate-700">{timeStr}</span>
+                            </div>
+                            <div className="flex justify-between text-slate-400">
+                              <span>Supplier Name:</span>
+                              <span className="font-bold text-slate-805">{getSupplierName(po.supplier)}</span>
+                            </div>
+                            <div className="flex justify-between text-slate-400">
+                              <span>Total Items:</span>
+                              <span className="font-bold text-slate-805">{totalItems} ({po.items?.reduce((sum, it) => sum + it.qty, 0) || 0} units)</span>
+                            </div>
+                            <div className="flex justify-between text-slate-400 border-t border-slate-100 pt-1.5 mt-1.5">
+                              <span>Grand Total:</span>
+                              <span className="font-black text-slate-850">₹{Number(po.total).toFixed(2)}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2 border-t border-slate-100 pt-3">
+                          <button
+                            onClick={() => {
+                              setSelectedPOIdState(po.id);
+                              setCurrentSubView('details');
+                            }}
+                            tabIndex={0}
+                            data-kb-col
+                            className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-xl text-xs font-black uppercase text-slate-700 transition cursor-pointer text-center kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                          >
+                            View
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedPOIdState(po.id);
+                              setCurrentSubView('details');
+                            }}
+                            tabIndex={0}
+                            data-kb-col
+                            className="flex-1 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase transition cursor-pointer text-center kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                          >
+                            Take Action
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {purchaseOrders.length === 0 && (
+                    <div className="col-span-full py-8 text-center text-slate-400 italic">No Purchase Orders found.</div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* SUB-VIEW: CREATE VIEW */}
+            {currentSubView === 'create' && (
+              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-4">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                  <h4 className="text-xs font-black text-slate-805 uppercase tracking-wider">Create Purchase Order</h4>
+                  <button onClick={() => {
+                    setPoMode('Direct');
+                    setLinkedPRId('');
+                    setPrApprovedItems([]);
+                    setCurrentSubView('list');
+                  }} className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400">
+                    <X size={15} />
+                  </button>
+                </div>
+
+                <form onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (poMode === 'PR') {
+                    await handleCreatePOFromPR(linkedPRId, prApprovedItems, poSupplier, poDeliveryDate, poPaymentTerms, poCommunicationMethod);
+                  } else {
+                    const qtyEl = e.target.elements.directQty;
+                    const priceEl = e.target.elements.directPrice;
+                    const taxEl = e.target.elements.directTax;
+                    const medId = directMedicineId;
+                    const qty = parseInt(qtyEl.value);
+                    const price = parseFloat(priceEl.value);
+                    const tax = parseFloat(taxEl.value) || 0;
+                    
+                    if (!medId) { alert('Please select medicine.'); return; }
+                    if (qty <= 0) { alert('Ordered quantity must be greater than zero.'); return; }
+                    
+                    const med = medicines.find(m => m.id === medId);
+                    await handleCreatePO({
+                      items: [{
+                        medicineId: medId,
+                        medicineName: med ? med.name : 'Unknown',
+                        qty,
+                        unitPrice: price,
+                        tax
+                      }]
+                    });
+                    setDirectMedicineId(''); // Reset state
+                  }
+                  setCurrentSubView('list');
+                }} className="space-y-4">
+                  
+                  {poMode === 'PR' ? (
+                    <div className="bg-blue-50/50 border border-blue-100 p-3 rounded-xl text-xs text-slate-700">
+                      Linking Approved PR ID: <span className="font-mono font-bold text-blue-700">{linkedPRId}</span>
+                      <div className="mt-2 text-[10px] text-slate-450 uppercase font-black tracking-wider">Eligible approved medicines list:</div>
+                      <div className="bg-white p-2 rounded-lg border border-slate-200 mt-1 max-h-32 overflow-y-auto space-y-1">
+                        {prApprovedItems.map((it, idx) => (
+                          <div key={idx} className="flex justify-between font-mono text-[10px]">
+                            <span>{it.medicineName}</span>
+                            <span className="font-black text-slate-800">{it.requestedQty || it.qty} {it.unit || 'Boxes'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-amber-50/40 border border-amber-100 p-3.5 rounded-xl text-xs font-medium text-slate-700">
+                      Creating **Direct PO** (without PR link).
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Select Supplier *</label>
+                      <SearchableDropdown
+                        options={suppliers.map(s => ({ id: s.name, name: s.name }))}
+                        value={poSupplier}
+                        onChange={(val) => setPoSupplier(val)}
+                        placeholder="Type to search supplier..."
+                        inputClass="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-705 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Expected Delivery Date</label>
+                      <input type="date" value={poDeliveryDate} onChange={(e) => setPoDeliveryDate(e.target.value)}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl" required />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Payment Terms</label>
+                      <select value={poPaymentTerms} onChange={(e) => setPoPaymentTerms(e.target.value)}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer text-slate-700">
+                        <option value="Net 15">Net 15</option>
+                        <option value="Net 30">Net 30</option>
+                        <option value="Advance Payment">Advance Payment</option>
+                        <option value="Partial Payment">Partial Payment</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Communication Method</label>
+                      <select value={poCommunicationMethod} onChange={(e) => setPoCommunicationMethod(e.target.value)}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer text-slate-700">
+                        <option value="Email">Email</option>
+                        <option value="Phone">Phone</option>
+                        <option value="Supplier Portal">Supplier Portal</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {poMode !== 'PR' && (
+                    <div className="bg-slate-50 p-4 border border-slate-200 rounded-xl space-y-3">
+                      <span className="block text-[10px] font-black uppercase text-slate-500">Medicine Item details</span>
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                        <div>
+                          <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Medicine *</label>
+                          <SearchableDropdown
+                            options={medicines.map(m => ({ id: m.id, name: m.name || m.medicineName }))}
+                            value={directMedicineId}
+                            onChange={(val) => setDirectMedicineId(val)}
+                            placeholder="Type to search medicine..."
+                            inputClass="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Ordered Qty *</label>
+                          <input type="number" name="directQty" defaultValue="100" min="1" className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold" required />
+                        </div>
+                        <div>
+                          <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Est. Unit Price (₹) *</label>
+                          <input type="number" step="0.01" name="directPrice" defaultValue="15.00" className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold" required />
+                        </div>
+                        <div>
+                          <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Tax Percentage (%)</label>
+                          <input type="number" defaultValue="12" name="directTax" className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+                    <button type="button" onClick={() => {
+                      alert('Draft saved locally.');
+                      setCurrentSubView('list');
+                    }} className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-black uppercase cursor-pointer">Save Draft</button>
+                    <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase shadow-sm cursor-pointer">Send/Create PO</button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* SUB-VIEW: DETAILS & INTERACTIVE LIFECYCLE TIMELINE */}
+            {currentSubView === 'details' && selectedPO && (
+              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-6">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                  <h4 className="text-xs font-black text-slate-805 uppercase tracking-wider">Purchase Order File: {selectedPO.id}</h4>
+                  <button onClick={() => setCurrentSubView('list')} tabIndex={0} className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400 kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    <X size={15} />
+                  </button>
+                </div>
+
+                {/* Supplier Information Card */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100 text-xs">
+                  <div>
+                    <span className="text-slate-400 block font-bold uppercase text-[9px]">Supplier Name</span>
+                    <span className="font-extrabold text-slate-800 text-sm">{getSupplierName(selectedPO.supplier)}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block font-bold uppercase text-[9px]">Expected Delivery Date</span>
+                    <span className="font-bold text-slate-700">{selectedPO.expectedDelivery ? new Date(selectedPO.expectedDelivery).toLocaleDateString('en-IN') : 'N/A'}</span>
+                  </div>
+                </div>
+
+                {/* GRAPHICAL TIMELINE COMPONENT */}
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-4">
+                  <div className="flex justify-between items-center border-b border-slate-200 pb-2 text-xs">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block font-bold uppercase">Workflow State</span>
+                      <span className="font-bold text-slate-800">{getPOStatusDisplay(selectedPO.status)}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 block font-bold uppercase">Progress Percent</span>
+                      <span className="font-extrabold text-blue-700">
+                        {(() => {
+                          const totalOrd = selectedPO.items?.reduce((s, it) => s + it.qty, 0) || 0;
+                          const totalRec = selectedPO.items?.reduce((s, it) => s + it.receivedQty, 0) || 0;
+                          const percent = totalOrd > 0 ? Math.round((totalRec / totalOrd) * 100) : 0;
+                          return `${percent}% Completed`;
+                        })()}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="relative flex justify-between items-center w-full py-4 text-xs font-bold text-slate-400 max-w-4xl mx-auto overflow-x-auto">
+                    <div className="absolute left-0 right-0 h-0.5 bg-slate-200 top-1/2 -translate-y-1/2 -z-10" />
+                    {getPOTraceTimeline(selectedPO).map((step, idx) => {
+                      const isDone = step.done;
+                      return (
+                        <div key={idx} className="flex flex-col items-center gap-1.5 shrink-0 px-2 bg-slate-50">
+                          <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs border transition-all ${
+                            isDone ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-white text-slate-400 border-slate-200'
+                          }`}>
+                            {isDone ? '✓' : idx + 1}
+                          </div>
+                          <span className={`text-[9px] uppercase tracking-wider ${isDone ? 'text-slate-700 font-bold' : 'text-slate-400'}`}>{step.name}</span>
+                          {step.date && <span className="text-[8px] text-slate-400 block font-normal">{step.date}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Actions for workflow status changes */}
+                  <div className="flex flex-wrap items-center justify-between border-t border-slate-200 pt-3 gap-2">
+                    <span className="text-[10px] text-slate-500 font-bold uppercase">Workflow Control Center:</span>
+                    <div className="flex gap-2">
+                      {(selectedPO.status === 'PO_GENERATED' || selectedPO.status === 'Draft') && (
+                        <>
+                          <button
+                            onClick={() => handleConfirmPO(selectedPO.id)}
+                            disabled={isSaving}
+                            tabIndex={0}
+                            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase shadow-sm cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                          >
+                            Verify & Generate PO
+                          </button>
+                          <button
+                            onClick={() => handleCancelPO(selectedPO.id)}
+                            disabled={isSaving}
+                            tabIndex={0}
+                            className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black uppercase shadow-sm cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                          >
+                            Cancel Order
+                          </button>
+                        </>
+                      )}
+                      {(selectedPO.status === 'PO_CONFIRMED' || selectedPO.status === 'Sent' || selectedPO.status === 'Accepted' || selectedPO.status === 'PARTIALLY_RECEIVED' || selectedPO.status === 'Partially Received') && (
+                        <>
+                          <button
+                            onClick={() => {
+                              setSelectedPOId(selectedPO.id);
+                              loadPOItems(selectedPO.id);
+                              resetNavigation('grn', 'create');
+                            }}
+                            tabIndex={0}
+                            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase shadow-sm cursor-pointer flex items-center gap-1 kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                          >
+                            <PackageCheck size={12} /> Record GRN
+                          </button>
+                          <button
+                            onClick={() => handleCancelPO(selectedPO.id)}
+                            disabled={isSaving}
+                            tabIndex={0}
+                            className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black uppercase shadow-sm cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                          >
+                            Cancel Order
+                          </button>
+                        </>
+                      )}
+                      {(selectedPO.status === 'COMPLETED' || selectedPO.status === 'Completed' || selectedPO.status === 'Closed') && (
+                        <span className="text-emerald-700 font-bold text-xs">This Purchase Order is Completed.</span>
+                      )}
+                      {selectedPO.status === 'CANCELLED' && (
+                        <span className="text-rose-700 font-bold text-xs">This Purchase Order has been Cancelled.</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Add Additional Medicine to PO */}
+                {(selectedPO.status === 'PO_GENERATED' || selectedPO.status === 'Draft') && (
+                  <div className="bg-slate-50/50 p-3.5 border border-slate-200 rounded-xl space-y-2 text-xs">
+                    <span className="block text-[10px] font-black uppercase text-slate-500 font-bold">Add Additional Medicine to PO</span>
+                    <div className="flex gap-2">
+                      <select
+                        onChange={(e) => {
+                          handleAddPOMedicine(selectedPO.id, e.target.value);
+                          e.target.value = '';
+                        }}
+                        tabIndex={0}
+                        className="flex-1 p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-808 cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      >
+                        <option value="">— Select Medicine to Add —</option>
+                        {medicines.map(m => (
+                          <option key={m.id} value={m.id}>{m.name || m.medicineName} (₹{m.pricePerPiece || '15.00'})</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                {/* MEDICINES LIST TABLE WITH ITEM-LEVEL QUANTITY ACTIONS */}
+                <div className="space-y-3">
+                  <span className="block text-[10px] font-black uppercase text-slate-500 border-b border-slate-100 pb-1">Ordered Medicines & Item-Level Receipt status</span>
+                  
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 text-slate-400 uppercase font-black text-[9px] border-b border-slate-200">
+                          <th className="py-2 px-3">Medicine Name</th>
+                          <th className="py-2 px-3 text-center">Ordered Qty</th>
+                          <th className="py-2 px-3 text-center">Unit</th>
+                          <th className="py-2 px-3 text-right">Unit Price (₹)</th>
+                          <th className="py-2 px-3 text-right">Total Price (₹)</th>
+                          {(selectedPO.status === 'PO_GENERATED' || selectedPO.status === 'Draft') && <th className="py-2 px-3 text-right">Actions</th>}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedPO.items?.map((item, idx) => {
+                          const isPendingPO = selectedPO.status === 'PO_GENERATED' || selectedPO.status === 'Draft';
+                          return (
+                            <tr key={idx} tabIndex={0} data-kb-row className="border-b border-slate-100 hover:bg-slate-50/50 kb-focusable focus:bg-blue-50/60 focus:ring-1 focus:ring-blue-300 focus:outline-none">
+                              <td className="py-3 px-3 font-bold text-slate-800">{item.medicineName || `Med #${item.medicineId}`}</td>
+                              <td className="py-3 px-3 text-center">
+                                {isPendingPO ? (
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button
+                                      onClick={() => handleDecreaseQty(selectedPO.id, item.medicineId)}
+                                      tabIndex={0}
+                                      data-kb-col
+                                      className="w-5 h-5 bg-slate-100 hover:bg-slate-200 rounded border border-slate-300 text-slate-700 font-bold flex items-center justify-center text-xs kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                    >
+                                      -
+                                    </button>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      value={item.qty}
+                                      onChange={(e) => handleEditPOItemQty(selectedPO.id, item.medicineId, e.target.value)}
+                                      tabIndex={0}
+                                      data-kb-col
+                                      className="w-14 p-1 text-center font-bold border border-slate-200 rounded text-xs bg-white kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                    />
+                                    <button
+                                      onClick={() => handleIncreaseQty(selectedPO.id, item.medicineId)}
+                                      tabIndex={0}
+                                      data-kb-col
+                                      className="w-5 h-5 bg-slate-100 hover:bg-slate-200 rounded border border-slate-300 text-slate-700 font-bold flex items-center justify-center text-xs kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span className="font-mono font-bold">{item.qty}</span>
+                                )}
+                              </td>
+                              <td className="py-3 px-3 text-center text-slate-500 font-semibold">Boxes</td>
+                              <td className="py-3 px-3 text-right font-mono">₹{Number(item.unitPrice).toFixed(2)}</td>
+                              <td className="py-3 px-3 text-right font-mono font-bold text-slate-800">₹{Number(item.total).toFixed(2)}</td>
+                              {isPendingPO && (
+                                <td className="py-3 px-3 text-right">
+                                  <button
+                                    onClick={() => handleRemovePOItem(selectedPO.id, item.medicineId)}
+                                    tabIndex={0}
+                                    data-kb-col
+                                    className="px-2 py-0.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded text-[9px] font-bold cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                  >
+                                    Remove
+                                  </button>
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex justify-end text-xs font-black text-slate-800 border-t border-slate-100 pt-3">
+                    <span>Grand Total: ₹{Number(selectedPO.total).toFixed(2)}</span>
+                  </div>
+                </div>
+
+                {/* Remarks Input */}
+                {(selectedPO.status === 'PO_GENERATED' || selectedPO.status === 'Draft') && (
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">Purchase Order Remarks</label>
+                    <textarea
+                      defaultValue={selectedPO.communicationMethod || ''}
+                      onChange={(e) => {
+                        selectedPO.communicationMethod = e.target.value;
+                      }}
+                      placeholder="Enter special instructions or remarks..."
+                      tabIndex={0}
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      rows="2"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ─── TAB 4: SHIPMENT TRACKING ─── */}
+        {currentTab === 'shipments' && (
+          <div className="space-y-6 animate-fade-in">
+            {/* SUB-VIEW: LIST VIEW */}
+            {currentSubView === 'list' && (
+              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-4">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                    <Truck size={14} className="text-blue-600" /> Active Shipments Registry
+                  </h4>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-400 uppercase font-black text-[9px] border-b border-slate-200">
+                        <th className="py-2.5 px-3">Shipment ID</th>
+                        <th className="py-2.5 px-3">PO Reference</th>
+                        <th className="py-2.5 px-3">Tracking ID</th>
+                        <th className="py-2.5 px-3">Dispatch Date</th>
+                        <th className="py-2.5 px-3 text-center">Status</th>
+                        <th className="py-2.5 px-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {shipments.map(sh => (
+                        <tr key={sh.id} className="border-b border-slate-100 hover:bg-slate-50/50">
+                          <td className="py-3 px-3 font-mono font-bold text-[10px] text-slate-700">{sh.id}</td>
+                          <td className="py-3 px-3 font-mono text-slate-450">{sh.poId}</td>
+                          <td className="py-3 px-3 text-slate-550 font-bold">{sh.trackingId || 'N/A'}</td>
+                          <td className="py-3 px-3 text-slate-450">{sh.dispatchDate ? new Date(sh.dispatchDate).toLocaleDateString('en-IN') : 'N/A'}</td>
+                          <td className="py-3 px-3 text-center">
+                            <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${getStatusBadgeClass(sh.status)}`}>{sh.status}</span>
+                          </td>
+                          <td className="py-3 px-3 text-right">
+                            <button
+                              onClick={() => {
+                                setSelectedShipmentIdState(sh.id);
+                                setCurrentSubView('details');
+                              }}
+                              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg text-[9px] font-black uppercase text-slate-700 transition cursor-pointer"
+                            >
+                              View / Track
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {shipments.length === 0 && <tr><td colSpan="6" className="py-6 text-center text-slate-400 italic">No active shipments. Mark PO dispatch to create shipments.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* SUB-VIEW: SHIPMENT DETAILS / TIMELINE VIEW */}
+            {currentSubView === 'details' && selectedShipment && (
+              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-6">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                  <h4 className="text-xs font-black text-slate-805 uppercase tracking-wider">Shipment Status & Chronology: {selectedShipment.id}</h4>
+                  <button onClick={() => setCurrentSubView('list')} className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400">
+                    <X size={15} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-50 p-4 rounded-xl text-xs">
+                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">PO reference</span><span className="font-bold font-mono">{selectedShipment.poId}</span></div>
+                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Tracking reference</span><span className="font-bold">{selectedShipment.trackingId || 'N/A'}</span></div>
+                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Invoice Number</span><span className="font-bold text-slate-700">{selectedShipment.invoiceNumber || 'N/A'}</span></div>
+                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Dispatch Date</span><span className="font-bold">{selectedShipment.dispatchDate ? new Date(selectedShipment.dispatchDate).toLocaleDateString('en-IN') : 'N/A'}</span></div>
+                </div>
+
+                {/* TRACKING TIMELINE */}
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-4">
+                  <div className="flex justify-between items-center border-b border-slate-200 pb-2 text-xs">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block font-bold uppercase">Active Status</span>
+                      <span className="font-bold text-slate-800">{selectedShipment.status}</span>
+                    </div>
+                    {selectedShipment.status !== 'Delivered' && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-slate-500 font-bold uppercase">Change Status:</span>
+                        <select
+                          value={selectedShipment.status}
+                          onChange={(e) => handleUpdateShipmentStatus(selectedShipment.id, e.target.value)}
+                          className="p-1 bg-white border border-slate-200 rounded-lg text-[10px] font-bold cursor-pointer"
+                        >
+                          <option value="Supplier Accepted">Supplier Accepted</option>
+                          <option value="Packed">Packed</option>
+                          <option value="Shipped">Shipped</option>
+                          <option value="In Transit">In Transit</option>
+                          <option value="Delivered">Delivered</option>
+                        </select>
+                      </div>
+                    )}
+                  </div>
+
+                  {(() => {
+                    const statuses = ['Supplier Accepted', 'Packed', 'Shipped', 'In Transit', 'Delivered'];
+                    const currentIdx = statuses.indexOf(selectedShipment.status);
+                    return (
+                      <div className="relative flex justify-between items-center w-full py-4 text-xs font-bold text-slate-400 max-w-2xl mx-auto">
+                        <div className="absolute left-0 right-0 h-0.5 bg-slate-200 top-1/2 -translate-y-1/2 -z-10" />
+                        {statuses.map((st, sidx) => {
+                          const isDone = sidx <= currentIdx;
+                          return (
+                            <div key={sidx} className="flex flex-col items-center gap-1 bg-slate-50 px-2 text-center shrink-0">
+                              <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] border transition-all ${
+                                isDone ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-400 border-slate-200'
+                              }`}>
+                                {isDone ? '✓' : sidx + 1}
+                              </div>
+                              <span className={`text-[8px] uppercase tracking-wider ${isDone ? 'text-slate-700 font-bold' : 'text-slate-400'}`}>{st}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                <div className="space-y-3">
+                  <span className="block text-[10px] font-black uppercase text-slate-500 border-b border-slate-100 pb-1">Shipped Items Ledger</span>
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 max-h-48 overflow-y-auto space-y-1.5 font-mono text-[10px]">
+                    {selectedShipment.items?.map((it, idx) => (
+                      <div key={idx} className="flex justify-between border-b border-slate-200/50 pb-1.5">
+                        <span>{it.medicine?.name || it.medicine?.medicineName || 'Medicine'}</span>
+                        <span className="font-black text-slate-800">{it.qty} Units</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {selectedShipment.status === 'Delivered' && (
+                  <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+                    <button
+                      onClick={() => {
+                        setSelectedPOId(selectedShipment.poId);
+                        loadPOItems(selectedShipment.poId, selectedShipment.id);
+                        resetNavigation('grn', 'create');
+                      }}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase transition cursor-pointer"
+                    >
+                      Record GRN for Shipment →
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* SUB-VIEW: CREATE SHIPMENT FORM */}
+            {currentSubView === 'create' && (
+              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-4">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                  <h4 className="text-xs font-black text-slate-805 uppercase tracking-wider">Log Dispatch Shipment</h4>
+                  <button onClick={() => setCurrentSubView('list')} className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400">
+                    <X size={15} />
+                  </button>
+                </div>
+
+                <form onSubmit={async (e) => {
+                  e.preventDefault();
+                  await handleCreateShipment(shipmentForm.poId, shipmentForm.trackingId, shipmentForm.invoiceNumber, shipmentForm.items);
+                  setCurrentSubView('list');
+                }} className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">PO Reference *</label>
+                      <input type="text" value={shipmentForm.poId} disabled className="w-full p-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 font-mono" />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Tracking ID / Courier Ref *</label>
+                      <input type="text" value={shipmentForm.trackingId} onChange={(e) => setShipmentForm({ ...shipmentForm, trackingId: e.target.value })}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold" required />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Supplier Invoice Ref *</label>
+                      <input type="text" value={shipmentForm.invoiceNumber} onChange={(e) => setShipmentForm({ ...shipmentForm, invoiceNumber: e.target.value })}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold" required />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <span className="block text-[10px] font-black uppercase text-slate-500">Shipped Quantities:</span>
+                    {shipmentForm.items.map((it, idx) => (
+                      <div key={idx} className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                        <span className="text-xs font-bold text-slate-700">{medicines.find(m => m.id === it.medicineId)?.name || 'Medicine'}</span>
+                        <input type="number" value={it.qty} onChange={(e) => {
+                          const val = parseInt(e.target.value);
+                          setShipmentForm(prev => {
+                            const newItems = [...prev.items];
+                            newItems[idx].qty = val;
+                            return { ...prev, items: newItems };
+                          });
+                        }} className="p-2 w-28 bg-white border border-slate-200 rounded-lg text-xs" required />
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-3 border-t border-slate-150">
+                    <button type="button" onClick={() => setCurrentSubView('list')} className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-bold uppercase cursor-pointer">Cancel</button>
+                    <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold uppercase shadow-sm cursor-pointer">Log Shipment</button>
+                  </div>
+                </form>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ─── TAB 5: GOODS RECEIPT NOTE (GRN) ─── */}
+        {currentTab === 'grn' && (
+          <div className="space-y-6 animate-fade-in">
+            {/* SUB-VIEW: LIST VIEW */}
+            {currentSubView === 'list' && (
+              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-3">
+                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                    <PackageCheck size={14} className="text-blue-600" /> Goods Receipt Note (GRN) Registry
+                  </h4>
+                  <button onClick={() => {
+                    setSelectedPOId('');
+                    setSelectedShipmentId('');
+                    setInvoiceNumber('');
+                    setGrnItems([]);
+                    setCurrentSubView('create');
+                  }} tabIndex={0} className="flex items-center gap-1 px-3 py-1.5 bg-emerald-605 hover:bg-emerald-700 text-white bg-emerald-600 rounded-xl text-xs font-black uppercase transition cursor-pointer shadow-sm kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    <Plus size={14} /> Record Goods Receipt (GRN)
+                  </button>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-400 uppercase font-black text-[9px] border-b border-slate-200">
+                        <th className="py-2.5 px-3">GRN ID</th>
+                        <th className="py-2.5 px-3">PO Reference</th>
+                        <th className="py-2.5 px-3">Supplier Name</th>
+                        <th className="py-2.5 px-3">Received Date</th>
+                        <th className="py-2.5 px-3 text-center">Items Received</th>
+                        <th className="py-2.5 px-3 text-center">Verification Status</th>
+                        <th className="py-2.5 px-3 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {goodsReceipts.map(grn => (
+                        <tr key={grn.id} tabIndex={0} data-kb-row className="border-b border-slate-100 hover:bg-slate-50/50 kb-focusable focus:bg-blue-50/60 focus:ring-1 focus:ring-blue-300 focus:outline-none">
+                          <td className="py-3 px-3 font-mono font-bold text-slate-700">{grn.id}</td>
+                          <td className="py-3 px-3 font-mono text-slate-450">{grn.poId}</td>
+                          <td className="py-3 px-3 font-bold text-slate-700">{grn.supplierName}</td>
+                          <td className="py-3 px-3 text-slate-450">{new Date(grn.receivedDate).toLocaleDateString('en-IN')}</td>
+                          <td className="py-3 px-3 text-center font-bold">{grn.items?.length || 0}</td>
+                          <td className="py-3 px-3 text-center">
+                            <span className="px-2.5 py-0.5 rounded-full text-[8px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">{grn.status}</span>
+                          </td>
+                          <td className="py-3 px-3 text-right">
+                            <button
+                              onClick={() => {
+                                setSelectedGRNIdState(grn.id);
+                                setCurrentSubView('details');
+                              }}
+                              tabIndex={0}
+                              data-kb-col
+                              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg text-[9px] font-black uppercase text-slate-700 transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                            >
+                              View Details
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* SUB-VIEW: CREATE GRN RECEIVING Verification Form */}
+            {currentSubView === 'create' && (
+              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-4">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                  <h4 className="text-xs font-black text-slate-805 uppercase tracking-wider">Record Goods Receipt Note</h4>
+                  <button onClick={() => setCurrentSubView('list')} tabIndex={0} className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400 kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    <X size={15} />
+                  </button>
+                </div>
+
+                <form onSubmit={handleGRNSubmitLocal} className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Select Purchase Order *</label>
+                      <select value={selectedPOId} onChange={(e) => loadPOItems(e.target.value)}
+                        tabIndex={0}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-805 cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        <option value="">— Select PO —</option>
+                        {pendingGRNOrders.map(po => <option key={po.id} value={po.id}>{po.id} — {getSupplierName(po.supplier)}</option>)}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Supplier Invoice reference *</label>
+                      <input type="text" placeholder="e.g. INV-2021" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)}
+                        tabIndex={0}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none" required />
+                    </div>
+
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Received By</label>
+                      <input type="text" value={receivedBy} onChange={(e) => setReceivedBy(e.target.value)}
+                        tabIndex={0}
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+                    </div>
+                  </div>
+
+                  {grnItems.length > 0 && (
+                    <div className="space-y-4">
+                      <span className="block text-[10px] font-black uppercase text-slate-500 border-b border-slate-100 pb-1">Quality Inspection Items Checklist:</span>
+                      
+                      {grnItems.map((item, idx) => {
+                        const remaining = item.orderedQty - item.alreadyReceived;
+                        const rx = parseInt(item.receivedQty) || 0; // Current Raw Received Quantity input
+                        const dmg = parseInt(item.damagedQty) || 0;  // Damaged Quantity input
+                        const pending = remaining - rx;              // Pending Quantity auto-calculated
+                        const accepted = rx - dmg;                    // Accepted Quantity auto-calculated
+
+                        return (
+                          <div key={idx} tabIndex={0} data-kb-row className="p-3.5 bg-blue-50/50 border border-blue-100 rounded-2xl space-y-3 kb-focusable focus:ring-2 focus:ring-blue-400 focus:bg-slate-50/50 focus:outline-none">
+                            <div className="flex flex-wrap justify-between items-center text-xs gap-2">
+                              <span className="font-extrabold text-blue-800">{item.medicineName}</span>
+                              <div className="flex flex-wrap gap-2.5 text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                                <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-700">Ordered: {item.orderedQty}</span>
+                                <span className="bg-emerald-100 px-1.5 py-0.5 rounded text-emerald-800">Rec. Previously: {item.alreadyReceived}</span>
+                                <span className="bg-blue-100 px-1.5 py-0.5 rounded text-blue-800">Accepted Quantity: {accepted}</span>
+                                <span className={`${pending < 0 ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'} px-1.5 py-0.5 rounded`}>Pending Quantity: {pending}</span>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                              <div>
+                                <label className="block text-[8px] font-bold text-slate-400 uppercase mb-0.5">Batch Number *</label>
+                                <input type="text" value={item.batchNumber || ''} onChange={(e) => updateGrnItem(idx, 'batchNumber', e.target.value)}
+                                  tabIndex={0}
+                                  data-kb-col
+                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none" required />
+                              </div>
+                              <div>
+                                <label className="block text-[8px] font-bold text-slate-400 uppercase mb-0.5">Current Received Qty *</label>
+                                <input type="number" value={item.receivedQty} onChange={(e) => updateGrnItem(idx, 'receivedQty', e.target.value)}
+                                  tabIndex={0}
+                                  data-kb-col
+                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none" required />
+                              </div>
+                              <div>
+                                <label className="block text-[8px] font-bold text-slate-400 uppercase mb-0.5">Mfg Date *</label>
+                                <input type="date" value={item.mfgDate || ''} onChange={(e) => updateGrnItem(idx, 'mfgDate', e.target.value)}
+                                  tabIndex={0}
+                                  data-kb-col
+                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none" required />
+                              </div>
+                              <div>
+                                <label className="block text-[8px] font-bold text-slate-400 uppercase mb-0.5">Expiry Date *</label>
+                                <input type="date" value={item.expiryDate || ''} onChange={(e) => updateGrnItem(idx, 'expiryDate', e.target.value)}
+                                  tabIndex={0}
+                                  data-kb-col
+                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none" required />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              <div>
+                                <label className="block text-[8px] font-bold text-slate-400 uppercase mb-0.5">Damaged Qty</label>
+                                <input type="number" value={item.damagedQty} onChange={(e) => updateGrnItem(idx, 'damagedQty', e.target.value)}
+                                  tabIndex={0}
+                                  data-kb-col
+                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+                              </div>
+                              <div>
+                                <label className="block text-[8px] font-bold text-slate-400 uppercase mb-0.5">Remarks / Details</label>
+                                <input type="text" placeholder="Remarks..." value={item.remarks || ''} onChange={(e) => updateGrnItem(idx, 'remarks', e.target.value)}
+                                  tabIndex={0}
+                                  data-kb-col
+                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+                              </div>
+                            </div>
+                          
+                          <div className="flex gap-2 justify-end pt-1 border-t border-slate-100/50 mt-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const remaining = item.orderedQty - item.alreadyReceived;
+                                updateGrnItem(idx, 'receivedQty', remaining);
+                              }}
+                              tabIndex={0}
+                              data-kb-col
+                              className="px-2 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded text-[9px] font-bold cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                            >
+                              Mark Received
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const qty = parseInt(item.receivedQty) || 0;
+                                updateGrnItem(idx, 'damagedQty', qty);
+                              }}
+                              tabIndex={0}
+                              data-kb-col
+                              className="px-2 py-0.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded text-[9px] font-bold cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                            >
+                              Mark Damaged
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                updateGrnItem(idx, 'receivedQty', 0);
+                                updateGrnItem(idx, 'damagedQty', 0);
+                              }}
+                              tabIndex={0}
+                              data-kb-col
+                              className="px-2 py-0.5 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 rounded text-[9px] font-bold cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                            >
+                              Cancel Item
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+                    <button type="button" onClick={() => resetNavigation('grn', 'list')} tabIndex={0} className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-bold uppercase cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">Cancel</button>
+                    <button type="button" onClick={() => { alert('GRN Draft saved successfully.'); resetNavigation('grn', 'list'); }} tabIndex={0} className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-bold uppercase cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">Save Draft</button>
+                    <button type="submit" disabled={!selectedPOId || grnItems.length === 0}
+                      tabIndex={0}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-xl text-xs font-black uppercase shadow-sm cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                      Confirm GRN & Auto Allocate
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* SUB-VIEW: GRN DETAILS VIEW */}
+            {currentSubView === 'details' && selectedGRN && (
+              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-5">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                  <h4 className="text-xs font-black text-slate-805 uppercase tracking-wider">GRN Details File: {selectedGRN.id}</h4>
+                  <button onClick={() => setCurrentSubView('list')} className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400">
+                    <X size={15} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-50 p-4 rounded-xl text-xs">
+                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Received Date</span><span className="font-bold">{new Date(selectedGRN.receivedDate).toLocaleString('en-IN')}</span></div>
+                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Received By</span><span className="font-bold">{selectedGRN.receivedBy}</span></div>
+                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Invoice Reference</span><span className="font-bold text-slate-700">{selectedGRN.invoiceNumber}</span></div>
+                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">PO Link</span><span className="font-mono text-slate-500 font-bold">{selectedGRN.poId}</span></div>
+                  <div tabIndex={0} data-kb-col className="kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"><span className="text-slate-400 block font-bold uppercase text-[9px]">Supplier</span><span className="font-bold">{getSupplierName(selectedGRN.supplierId)}</span></div>
+                </div>
+
+                <div className="space-y-3">
+                  <span className="block text-[10px] font-black uppercase text-slate-500 border-b border-slate-100 pb-1">Verified Received Medicines</span>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 text-slate-400 uppercase font-black text-[9px] border-b border-slate-200">
+                          <th className="py-2 px-3">Medicine</th>
+                          <th className="py-2 px-3">Batch Number</th>
+                          <th className="py-2 px-3 text-center">Qty Received</th>
+                          <th className="py-2 px-3 text-center">Damaged</th>
+                          <th className="py-2 px-3">Mfg Date</th>
+                          <th className="py-2 px-3">Expiry Date</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedGRN.items?.map((item, idx) => (
+                          <tr key={idx} className="border-b border-slate-100 hover:bg-slate-50/50">
+                            <td className="py-3 px-3 font-bold text-slate-800">{item.medicineName || `Med #${item.medicineId}`}</td>
+                            <td className="py-3 px-3 font-mono text-slate-500 font-bold text-[10px]">{item.batchNumber}</td>
+                            <td className="py-3 px-3 text-center font-mono font-black text-emerald-600">{item.receivedQty}</td>
+                            <td className="py-3 px-3 text-center font-mono text-rose-500 font-bold">{item.damagedQty}</td>
+                            <td className="py-3 px-3 text-slate-500">{new Date(item.mfgDate).toLocaleDateString('en-IN')}</td>
+                            <td className="py-3 px-3 text-slate-500">{new Date(item.expiryDate).toLocaleDateString('en-IN')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {currentTab === 'completed' && (
+          <div className="space-y-6 animate-fade-in">
+            <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-4 shadow-sm">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div>
+                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <CheckCircle size={14} className="text-emerald-600" /> Unified Procurement History Ledger
+                  </h4>
+                  <p className="text-[10px] text-slate-400 font-bold mt-0.5">Chronological ledger of completed and cancelled procurement order cycles.</p>
+                </div>
+
+                {/* Date Range Filter - Right Side */}
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
+                    {/* Start Date: type or pick */}
+                    <div className="flex items-center gap-1 relative">
+                      <input
+                        type="text"
+                        value={formatDateDisplay(filterStartDate)}
+                        onChange={(e) => {
+                          const parsed = parseTypedDate(e.target.value);
+                          if (parsed) setFilterStartDate(parsed);
+                          else if (e.target.value === '') setFilterStartDate('');
+                        }}
+                        placeholder="DD/MM/YYYY"
+                        tabIndex={0}
+                        className="kb-focusable bg-transparent text-xs font-semibold text-slate-600 border-none outline-none focus:ring-0 w-[88px] placeholder:text-slate-300"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => startDateRef.current?.showPicker?.()}
+                        tabIndex={0}
+                        title="Pick from calendar"
+                        className="text-slate-400 hover:text-blue-500 transition-colors kb-focusable focus:outline-none focus:text-blue-500 cursor-pointer"
+                      >
+                        <Calendar size={13} />
+                      </button>
+                      <input
+                        ref={startDateRef}
+                        type="date"
+                        value={filterStartDate || ''}
+                        onChange={(e) => setFilterStartDate(e.target.value)}
+                        className="absolute opacity-0 w-0 h-0 pointer-events-none"
+                        tabIndex={-1}
+                      />
+                    </div>
+
+                    <span className="text-[10px] font-bold text-slate-300 uppercase">to</span>
+
+                    {/* End Date: type or pick */}
+                    <div className="flex items-center gap-1 relative">
+                      <input
+                        type="text"
+                        value={formatDateDisplay(filterEndDate)}
+                        onChange={(e) => {
+                          const parsed = parseTypedDate(e.target.value);
+                          if (parsed) setFilterEndDate(parsed);
+                          else if (e.target.value === '') setFilterEndDate('');
+                        }}
+                        placeholder="DD/MM/YYYY"
+                        tabIndex={0}
+                        className="kb-focusable bg-transparent text-xs font-semibold text-slate-600 border-none outline-none focus:ring-0 w-[88px] placeholder:text-slate-300"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => endDateRef.current?.showPicker?.()}
+                        tabIndex={0}
+                        title="Pick from calendar"
+                        className="text-slate-400 hover:text-blue-500 transition-colors kb-focusable focus:outline-none focus:text-blue-500 cursor-pointer"
+                      >
+                        <Calendar size={13} />
+                      </button>
+                      <input
+                        ref={endDateRef}
+                        type="date"
+                        value={filterEndDate || ''}
+                        onChange={(e) => setFilterEndDate(e.target.value)}
+                        className="absolute opacity-0 w-0 h-0 pointer-events-none"
+                        tabIndex={-1}
+                      />
+                    </div>
+                  </div>
+
+                  {(filterStartDate || filterEndDate) && (
+                    <button
+                      onClick={() => { setFilterStartDate(''); setFilterEndDate(''); }}
+                      tabIndex={0}
+                      className="flex items-center gap-1 px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-500 hover:text-rose-600 border border-rose-200 rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all kb-focusable focus:ring-2 focus:ring-rose-400 focus:outline-none"
+                    >
+                      <X size={11} /> Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-400 uppercase font-black text-[9px] border-b border-slate-200">
+                      <th className="py-2.5 px-3">PO ID</th>
+                      <th className="py-2.5 px-3">Supplier</th>
+                      <th className="py-2.5 px-3 text-center">Medicine Count</th>
+                      <th className="py-2.5 px-3 text-center">Ordered Qty</th>
+                      <th className="py-2.5 px-3 text-center">Received Qty</th>
+                      <th className="py-2.5 px-3 text-center">Damaged Qty</th>
+                      <th className="py-2.5 px-3">Invoice Number</th>
+                      <th className="py-2.5 px-3 text-center">Completed Date</th>
+                      <th className="py-2.5 px-3 text-center">Final Status</th>
+                      <th className="py-2.5 px-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                      {completedPOs
+                        .filter(po => {
+                          if (filterStartDate) {
+                            const compDate = new Date(po.updatedAt);
+                            if (compDate < new Date(filterStartDate)) return false;
+                          }
+                          if (filterEndDate) {
+                            const compDate = new Date(po.updatedAt);
+                            if (compDate > new Date(filterEndDate)) return false;
+                          }
+                          return true;
+                        })
+                        .map(po => {
+                      const medicineCount = po.items?.length || 0;
+                      const orderedQty = po.items?.reduce((s, it) => s + it.qty, 0) || 0;
+                      const receivedQty = po.items?.reduce((s, it) => s + (it.receivedQty || 0), 0) || 0;
+                      const damagedQty = po.items?.reduce((s, it) => s + (it.damagedQty || 0), 0) || 0;
+                      const invoiceNumbers = po.grns?.map(g => g.invoiceNumber).filter(Boolean).join(', ') || 'N/A';
+                      const completedDate = new Date(po.updatedAt).toLocaleDateString('en-IN');
+                      const statusDisplay = getPOStatusDisplay(po.status);
+                      
+                      return (
+                        <tr key={po.id} tabIndex={0} data-kb-row className="border-b border-slate-100 hover:bg-slate-50/50 kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                          <td className="py-3 px-3 font-mono font-bold text-[10px] text-slate-700">{po.id}</td>
+                          <td className="py-3 px-3 font-bold text-slate-700">{getSupplierName(po.supplier)}</td>
+                          <td className="py-3 px-3 text-center font-semibold">{medicineCount}</td>
+                          <td className="py-3 px-3 text-center font-mono">{orderedQty}</td>
+                          <td className="py-3 px-3 text-center font-mono text-emerald-600 font-bold">{receivedQty}</td>
+                          <td className="py-3 px-3 text-center font-mono text-rose-500">{damagedQty}</td>
+                          <td className="py-3 px-3 font-mono text-slate-500">{invoiceNumbers}</td>
+                          <td className="py-3 px-3 text-center text-slate-500 font-semibold">{completedDate}</td>
+                          <td className="py-3 px-3 text-center">
+                            <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${getStatusBadgeClass(po.status)}`}>
+                              {statusDisplay}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-right">
+                            <div className="flex justify-end gap-1.5">
+                              <button
+                                onClick={() => {
+                                  setSelectedPOIdState(po.id);
+                                  resetNavigation('po', 'details');
+                                }}
+                                tabIndex={0}
+                                data-kb-col
+                                className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded text-[9px] font-bold uppercase text-slate-700 transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                              >
+                                View
+                              </button>
+                              <button
+                                onClick={() => {
+                                  toast.success(`Downloading PDF Invoice for ${po.id}...`);
+                                }}
+                                tabIndex={0}
+                                data-kb-col
+                                className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded text-[9px] font-bold uppercase text-slate-700 transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                              >
+                                Download
+                              </button>
+                              <button
+                                onClick={() => handlePrintPO(po)}
+                                tabIndex={0}
+                                data-kb-col
+                                className="px-2 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded text-[9px] font-black uppercase transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                              >
+                                Print
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {completedPOs.length === 0 && (
+                      <tr>
+                        <td colSpan="10" className="py-8 text-center text-slate-400 italic">No historical records logged yet.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Toast Notification HUD */}
+        <ToastContainer toasts={toasts} confirm={confirm} dismiss={dismiss} resolveConfirm={resolveConfirm} />
+      </div>
+    </ErrorBoundary>
   );
 }
