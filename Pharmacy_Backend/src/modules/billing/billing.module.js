@@ -672,6 +672,20 @@ export const billingController = {
     } catch (e) { next(e); }
   },
 
+  updateSettings: async (req, res, next) => {
+    try {
+      const { dailyDiscountRate } = req.body;
+      if (dailyDiscountRate !== undefined) {
+        await prisma.appSetting.upsert({
+          where: { key: 'dailyDiscountRate' },
+          update: { value: String(dailyDiscountRate) },
+          create: { key: 'dailyDiscountRate', value: String(dailyDiscountRate), description: 'Default global discount rate for billing' }
+        });
+      }
+      res.json({ success: true, message: 'Settings updated successfully' });
+    } catch (e) { next(e); }
+  },
+
   returnBill: async (req, res, next) => {
     try {
       const { id } = req.params;

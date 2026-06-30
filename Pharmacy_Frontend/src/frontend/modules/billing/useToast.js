@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 
 /**
  * Lightweight toast notification hook.
@@ -35,12 +35,12 @@ export function useToast() {
     return id;
   }, [dismiss]);
 
-  const toast = {
+  const toast = useMemo(() => ({
     success: (msg, dur) => showToast('success', msg, dur),
     error:   (msg, dur) => showToast('error',   msg, dur ?? 0), // errors are sticky
     warning: (msg, dur) => showToast('warning', msg, dur),
     info:    (msg, dur) => showToast('info',    msg, dur),
-  };
+  }), [showToast]);
 
   /**
    * Non-blocking confirm dialog using a Promise.

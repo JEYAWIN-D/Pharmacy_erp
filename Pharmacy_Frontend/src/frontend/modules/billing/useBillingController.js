@@ -269,6 +269,28 @@ export function useBillingController(role) {
     setBillingCart(updated);
   };
 
+  const applyGlobalDiscount = (rate) => {
+    const r = Math.min(100, Math.max(0, Number(rate) || 0));
+    setDailyDiscountRate(r);
+    if (billingCart.length > 0) {
+      const updated = billingCart.map(item => ({
+        ...item,
+        discount: r,
+        total: calcItemTotal(item.price, item.qty, r)
+      }));
+      setBillingCart(updated);
+    }
+  };
+
+  const saveDefaultDiscount = async (rate) => {
+    try {
+      await billingAPI.updateSettings({ dailyDiscountRate: rate });
+      toast.success(`Default discount saved as ${rate}%`);
+    } catch (err) {
+      toast.error('Failed to save default discount');
+    }
+  };
+
   const updateCartItemUnit = (index, newUnit) => {
     const updated = [...billingCart];
     updated[index] = { ...updated[index], sellingUnit: newUnit };
@@ -599,7 +621,7 @@ export function useBillingController(role) {
     payCash, setPayCash, payUPI, setPayUPI, payCard, setPayCard,
     handleCheckoutSubmit, triggerPrintWindow, printBillObj,
     invoiceData, paymentSnapshot, handleNewBillAfterInvoice,
-    updateCartItemDiscount, updateCartItemUnit, SELLING_UNITS,
+    updateCartQty, updateCartItemQtyExact, updateCartItemDiscount, applyGlobalDiscount, saveDefaultDiscount, updateCartItemUnit, SELLING_UNITS,
     currentTime, dailyDiscountRate,
     salesHistory, setSalesHistory, setInvoiceData,
     savedQueue, toasts, dismiss, resolveConfirm,

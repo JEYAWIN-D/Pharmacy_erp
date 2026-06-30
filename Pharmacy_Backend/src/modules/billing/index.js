@@ -32,6 +32,7 @@ router.get('/reports/medicine-wise',  billingController.getMedicineWiseReport);
 
 // POS V2 New Routes
 router.get('/settings',           billingController.getSettings);
+router.put('/settings',           billingController.updateSettings);
 router.get('/history/:mobile',    billingController.getHistoryByMobile);
 router.post('/hold',              billingController.addToQueue);
 router.post('/resume',            billingController.resumeQueue);
