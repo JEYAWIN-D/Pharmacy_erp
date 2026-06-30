@@ -121,11 +121,25 @@ export const purchaseAPI = {
   getPO: (id) => request('GET', `/purchase/orders/${id}`),
   createPO: (body) => request('POST', '/purchase/orders', body),
   updatePO: (id, body) => request('PUT', `/purchase/orders/${id}`, body),
+  getCompletedPOs: () => request('GET', '/purchase/orders/completed'),
+  createPOFromPR: (body) => request('POST', '/purchase/orders/from-pr', body),
+  sendPO: (id) => request('PUT', `/purchase/orders/${id}/send`),
+  updatePOStatus: (id, body) => request('PUT', `/purchase/orders/${id}/status`, body),
+  closePO: (id) => request('PUT', `/purchase/orders/${id}/close`),
+
+  // Shipments
+  getAllShipments: () => request('GET', '/purchase/shipments'),
+  createShipment: (body) => request('POST', '/purchase/shipments', body),
+  updateShipmentStatus: (id, status) => request('PUT', `/purchase/shipments/${id}/status`, { status }),
+
+  // Low Stock
+  getLowStock: () => request('GET', '/purchase/low-stock'),
 
   // GRN
   getAllGRNs: () => request('GET', '/purchase/grn'),
   getGRN: (id) => request('GET', `/purchase/grn/${id}`),
-  createGRN: (body) => request('POST', '/purchase/grn', body)
+  createGRN: (body) => request('POST', '/purchase/grn', body),
+  getCompletedGRNs: () => request('GET', '/purchase/grn/completed')
 };
 
 // ─── Prescriptions ────────────────────────────────────────────────────────────
@@ -155,6 +169,7 @@ export const billingAPI = {
   openRegister: (body) => request('POST', '/billing/cash-register/open', body),
   closeRegister: (id, body) => request('PUT', `/billing/cash-register/${id}/close`, body),
   getSettings: () => request('GET', '/billing/settings'),
+  updateSettings: (body) => request('PUT', '/billing/settings', body),
   bulkDeleteBills: (billIds) => request('DELETE', '/billing/bills/bulk-delete', { billIds }),
 };
 

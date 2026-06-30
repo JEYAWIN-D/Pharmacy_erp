@@ -100,35 +100,57 @@ model Supplier {
   id                String            @id @default(uuid())
   name              String
   code              String            @unique
+  supplierType      String?           @default("Distributor")
   contactPerson     String?
   phone             String?
+  alternatePhone    String?
   email             String?
   website           String?
   secondaryPhone    String?
   addressStreet     String?
   addressCity       String?
   addressState      String?
+  addressCountry    String?           @default("India")
   addressPincode    String?
   gstNumber         String?           @unique
   gstType           String?           @default("Regular")
+  panNumber         String?
   drugLicenseNo     String?           @unique
   drugLicenseExpiry DateTime?
+  fssaiNumber       String?
   paymentTermsDays  Int?              @default(30)
+  creditLimit       Decimal?          @default(200000) @db.Decimal(12, 2)
+  creditPeriod      Int?              @default(30)
+  paymentMode       String?           @default("Bank Transfer")
+  openingBalance    Decimal?          @default(0) @db.Decimal(12, 2)
   bankAccountName   String?
   bankAccountNumber String?
   bankIfscCode      String?
+  status            String?           @default("Active")
+  isPreferred       Boolean           @default(false)
   isActive          Boolean           @default(true)
   isDeleted         Boolean           @default(false)
+  remarks           String?
   createdBy         String?
   updatedBy         String?
+  deletedAt         DateTime?
+  deletedBy         String?
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
-  medicines         Medicine[]
-  purchaseOrders    PurchaseOrder[]
-  supplierInvoices  SupplierInvoice[]
-  supplierLedger    SupplierLedger[]
-  supplierPayments  SupplierPayment[]
-  supplierReturns   SupplierReturn[]
+  medicines              Medicine[]
+  purchaseOrders         PurchaseOrder[]
+  supplierInvoices       SupplierInvoice[]
+  supplierLedger         SupplierLedger[]
+  supplierPayments       SupplierPayment[]
+  supplierReturns        SupplierReturn[]
+  supplierCategories     SupplierCategory[]
+  supplierBrandMappings  SupplierBrandMapping[]
+  purchaseTerms          PurchaseTerm[]
+  supplierPriceHistory   SupplierPriceHistory[]
+  supplierDocuments      SupplierDocument[]
+  supplierPerformance    SupplierPerformance[]
+  supplierCreditNotes    SupplierCreditNote[]
+  supplierAuditLogs      SupplierAuditLog[]
 }
 
 model Rack {
@@ -600,15 +622,20 @@ model PatientReturnItem {
 
 model SupplierReturn {
   id           Int                  @id @default(autoincrement())
+  returnNumber String?              @unique
   supplierId   String?
   supplierName String?
+  grnId        String?
   creditAmount Decimal              @default(0) @db.Decimal(10, 2)
+  returnValue  Decimal              @default(0) @db.Decimal(10, 2)
   reason       String?
   status       String               @default("Pending")
   processedBy  String?
+  remarks      String?
   createdAt    DateTime             @default(now())
   updatedAt    DateTime             @updatedAt
   items        SupplierReturnItem[]
+  creditNotes  SupplierCreditNote[]
   supplier     Supplier?            @relation(fields: [supplierId], references: [id])
 
   @@map("supplier_returns")
@@ -619,7 +646,9 @@ model SupplierReturnItem {
   supplierReturnId Int
   medicineId       String?
   medicineName     String?
+  batchNumber      String?
   qty              Int
+  unitPrice        Decimal?       @db.Decimal(10, 2)
   medicine         Medicine?      @relation(fields: [medicineId], references: [id])
   supplierReturn   SupplierReturn @relation(fields: [supplierReturnId], references: [id])
 
@@ -860,4 +889,157 @@ model EmployeeDocument {
   employee     Employee @relation(fields: [employeeId], references: [id])
 
   @@map("employee_documents")
+}
+
+// ─── SUPPLIER MODULE MODELS ───────────────────────────────────────────────────
+
+model SupplierCategory {
+  id                String    @id @default(uuid())
+  supplierId        String
+  categoryName      String
+  isPreferred       Boolean   @default(false)
+  isDefaultSupplier Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  supplier          Supplier  @relation(fields: [supplierId], references: [id])
+
+  @@unique([supplierId, categoryName])
+  @@map("supplier_categories")
+}
+
+model SupplierBrandMapping {
+  id            String    @id @default(uuid())
+  supplierId    String
+  brandName     String
+  genericName   String?
+  medicineName  String?
+  medicineId    String?
+  strength      String?
+  packSize      String?
+  manufacturer  String?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  supplier      Supplier  @relation(fields: [supplierId], references: [id])
+
+  @@map("supplier_brand_mappings")
+}
+
+model PurchaseTerm {
+  id            String    @id @default(uuid())
+  supplierId    String
+  medicineId    String?
+  medicineName  String?
+  purchasePrice Decimal   @db.Decimal(10, 2)
+  gstPercent    Decimal?  @default(0) @db.Decimal(5, 2)
+  discount      Decimal?  @default(0) @db.Decimal(5, 2)
+  scheme        String?
+  moq           Int?      @default(1)
+  leadTimeDays  Int?      @default(3)
+  paymentTerms  String?
+  creditDays    Int?      @default(30)
+  effectiveFrom DateTime  @default(now())
+  effectiveTo   DateTime?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  supplier      Supplier  @relation(fields: [supplierId], references: [id])
+
+  @@map("purchase_terms")
+}
+
+model SupplierPriceHistory {
+  id            String    @id @default(uuid())
+  supplierId    String
+  medicineId    String?
+  medicineName  String?
+  brandName     String?
+  purchasePrice Decimal   @db.Decimal(10, 2)
+  gstPercent    Decimal?  @default(0) @db.Decimal(5, 2)
+  discount      Decimal?  @default(0) @db.Decimal(5, 2)
+  scheme        String?
+  effectiveFrom DateTime  @default(now())
+  effectiveTo   DateTime?
+  changedBy     String?
+  changeReason  String?
+  createdAt     DateTime  @default(now())
+  supplier      Supplier  @relation(fields: [supplierId], references: [id])
+
+  @@map("supplier_price_history")
+}
+
+model SupplierDocument {
+  id           String    @id @default(uuid())
+  supplierId   String
+  documentType String
+  documentName String?
+  fileName     String
+  filePath     String?
+  fileSize     Int?
+  mimeType     String?
+  expiryDate   DateTime?
+  status       String    @default("Active")
+  uploadedBy   String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  supplier     Supplier  @relation(fields: [supplierId], references: [id])
+
+  @@map("supplier_documents")
+}
+
+model SupplierPerformance {
+  id                    String    @id @default(uuid())
+  supplierId            String
+  periodStart           DateTime?
+  periodEnd             DateTime?
+  deliveryRate          Decimal?  @default(0) @db.Decimal(5, 2)
+  delayPercent          Decimal?  @default(0) @db.Decimal(5, 2)
+  returnPercent         Decimal?  @default(0) @db.Decimal(5, 2)
+  damagePercent         Decimal?  @default(0) @db.Decimal(5, 2)
+  shortSupplyPercent    Decimal?  @default(0) @db.Decimal(5, 2)
+  avgLeadTimeDays       Decimal?  @default(0) @db.Decimal(5, 2)
+  priceStability        Decimal?  @default(0) @db.Decimal(5, 2)
+  marginPercent         Decimal?  @default(0) @db.Decimal(5, 2)
+  revenueContribution   Decimal?  @default(0) @db.Decimal(5, 2)
+  purchaseContribution  Decimal?  @default(0) @db.Decimal(5, 2)
+  overallRating         Decimal?  @default(0) @db.Decimal(3, 1)
+  calculatedAt          DateTime  @default(now())
+  supplier              Supplier  @relation(fields: [supplierId], references: [id])
+
+  @@map("supplier_performance")
+}
+
+model SupplierCreditNote {
+  id               String          @id @default(uuid())
+  creditNoteNumber String          @unique
+  supplierId       String
+  returnId         Int?
+  amount           Decimal         @db.Decimal(10, 2)
+  adjustedAmount   Decimal?        @default(0) @db.Decimal(10, 2)
+  status           String          @default("Pending")
+  remarks          String?
+  createdBy        String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  supplier         Supplier        @relation(fields: [supplierId], references: [id])
+  supplierReturn   SupplierReturn? @relation(fields: [returnId], references: [id])
+
+  @@map("supplier_credit_notes")
+}
+
+model SupplierAuditLog {
+  id         String   @id @default(uuid())
+  supplierId String?
+  action     String
+  entity     String?
+  entityId   String?
+  oldValue   String?
+  newValue   String?
+  userId     String?
+  userName   String?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+  supplier   Supplier? @relation(fields: [supplierId], references: [id])
+
+  @@map("supplier_audit_logs")
 }

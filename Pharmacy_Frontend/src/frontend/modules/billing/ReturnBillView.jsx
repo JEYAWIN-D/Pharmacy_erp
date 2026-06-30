@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { CornerDownLeft, CheckCircle, X } from 'lucide-react';
+import { CornerDownLeft, CheckCircle, X, Info } from 'lucide-react';
 import { billingAPI } from '../../db/api';
 import { useToast } from './useToast';
 
-export default function ReturnBillView({ invoiceData, onBack }) {
+export default function ReturnBillView({ invoiceData, onBack, onOpenMedicineDetail }) {
   const { toast } = useToast();
   const [returnItems, setReturnItems] = useState(
     invoiceData.items.map(item => ({ ...item, returnQty: 0 }))
@@ -17,7 +17,7 @@ export default function ReturnBillView({ invoiceData, onBack }) {
     const itemsToReturn = returnItems
       .filter(i => i.returnQty > 0)
       .map(i => ({ billItemId: i.id, qty: i.returnQty }));
-      
+
     if (itemsToReturn.length === 0) {
       toast.error('Select at least one item to return');
       return;
@@ -38,6 +38,7 @@ export default function ReturnBillView({ invoiceData, onBack }) {
   return (
     <div className="absolute inset-0 bg-white z-50 flex flex-col items-center justify-center p-6 overflow-y-auto">
       <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-4xl flex flex-col max-h-full">
+        {/* Header */}
         <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-rose-50 rounded-t-2xl">
           <div>
             <h2 className="text-2xl font-black text-rose-700 flex items-center gap-2">
@@ -59,18 +60,25 @@ export default function ReturnBillView({ invoiceData, onBack }) {
                 <th className="p-3 text-center font-black">Return Qty</th>
                 <th className="p-3 text-right font-black">Unit Price</th>
                 <th className="p-3 text-right font-black">Refund Amount</th>
+                {/* FIX: Info column header */}
+                <th className="p-3 text-center font-black">Details</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {returnItems.map((item, idx) => (
                 <tr key={idx}>
-                  <td className="p-3 font-bold text-slate-800">{item.name}</td>
+                  <td className="p-3">
+                    <div className="font-bold text-slate-800">{item.name}</div>
+                    {item.batchNumber && (
+                      <div className="text-[10px] text-slate-400 font-mono">Batch: {item.batchNumber}</div>
+                    )}
+                  </td>
                   <td className="p-3 text-center font-bold text-slate-500">{item.qty}</td>
                   <td className="p-3 text-center">
-                    <input 
-                      type="number" 
-                      min="0" 
-                      max={item.qty} 
+                    <input
+                      type="number"
+                      min="0"
+                      max={item.qty}
                       value={item.returnQty}
                       onChange={e => {
                         const val = Math.min(item.qty, Math.max(0, parseInt(e.target.value) || 0));
@@ -83,6 +91,18 @@ export default function ReturnBillView({ invoiceData, onBack }) {
                   </td>
                   <td className="p-3 text-right font-bold text-slate-500">₹{Number(item.price).toFixed(2)}</td>
                   <td className="p-3 text-right font-black text-slate-800">₹{(item.returnQty * Number(item.price)).toFixed(2)}</td>
+                  {/* FIX: Info button to open medicine detail modal */}
+                  <td className="p-3 text-center">
+                    {onOpenMedicineDetail && (
+                      <button
+                        onClick={() => onOpenMedicineDetail(item)}
+                        className="p-1.5 bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 rounded-lg transition"
+                        title={`View details for ${item.name}`}
+                      >
+                        <Info size={14} />
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -91,7 +111,7 @@ export default function ReturnBillView({ invoiceData, onBack }) {
           <div className="flex gap-6 items-start">
             <div className="flex-1">
               <label className="block text-[10px] font-black uppercase text-slate-400 mb-2">Reason for Return</label>
-              <textarea 
+              <textarea
                 value={reason}
                 onChange={e => setReason(e.target.value)}
                 placeholder="E.g. Damaged product, wrong medicine..."
@@ -102,8 +122,7 @@ export default function ReturnBillView({ invoiceData, onBack }) {
             <div className="w-72 bg-rose-50 border border-rose-200 rounded-xl p-6">
               <h3 className="text-rose-600 font-bold uppercase text-[10px] tracking-wider mb-2">Total Refund</h3>
               <div className="text-3xl font-black text-rose-700 mb-6">₹{totalRefund.toFixed(2)}</div>
-              
-              <button 
+              <button
                 onClick={handleSubmit}
                 disabled={isSubmitting || totalRefund === 0}
                 className="w-full bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-black py-3 rounded-xl flex justify-center items-center gap-2 transition"
