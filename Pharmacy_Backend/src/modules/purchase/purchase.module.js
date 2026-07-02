@@ -160,7 +160,7 @@ const purchaseRepo = {
         poTime: poTimeStr,
         subtotal: subtotalVal,
         total: totalVal,
-        expectedDelivery: rest.expectedDelivery ? new Date(rest.expectedDelivery) : null,
+        
         items: {
           create: itemsData
         }
@@ -261,7 +261,7 @@ const purchaseRepo = {
           ...rest,
           subtotal: poSubtotal,
           total: poTotal,
-          ...(expectedDelivery !== undefined ? { expectedDelivery: expectedDelivery ? new Date(expectedDelivery) : null } : {})
+          
         },
         include: { supplier: true, items: { include: { medicine: true } } }
       });
