@@ -154,6 +154,7 @@ export const purchaseAPI = {
   validateInvoiceNumber: (supplierId, invoiceNumber, excludeGrnId = '') => 
     request('GET', `/purchase/grn/validate-invoice?supplierId=${supplierId}&invoiceNumber=${invoiceNumber}&excludeGrnId=${excludeGrnId}`),
   updateGRN: (id, body) => request('PUT', `/purchase/grn/${id}`, body),
+  deleteGRN: (id) => request('DELETE', `/purchase/grn/${id}`),
 
   // Procurement History
   getProcurementHistory: () => request('GET', '/purchase/history'),

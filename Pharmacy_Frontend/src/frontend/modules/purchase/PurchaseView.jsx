@@ -359,7 +359,8 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
     loadDraftGRN,
     editingDraftId, setEditingDraftId,
     updateGrnItem,
-    handleSubmitGRN
+    handleSubmitGRN,
+    handleDeleteGRNDraft
   } = useGRNController();
 
   // Navigation states for the 13 required pages
@@ -1133,7 +1134,7 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
               )}
               <button onClick={() => resetNavigation('po')} tabIndex={0}
                 className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'po' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-                <FileText size={13} /> Purchase Orders ({inProgressOrdersCount})
+                <FileText size={13} /> Purchase Orders ({pendingPOCount})
               </button>
               {enableShipmentTracking && (
                 <button onClick={() => resetNavigation('shipments')} tabIndex={0}
@@ -1143,7 +1144,7 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
               )}
               <button onClick={() => resetNavigation('grn')} tabIndex={0}
                 className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'grn' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-                <PackageCheck size={13} /> GRN Receivables ({totalPendingGRNCount})
+                <PackageCheck size={13} /> GRN Receivables
               </button>
               <button onClick={() => resetNavigation('completed')} tabIndex={0}
                 className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'completed' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
@@ -2281,6 +2282,12 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                 )}
               </div>
             )}
+
+            {currentSubView === 'details' && !selectedPO && (
+              <div className="bg-white border border-slate-200 p-8 rounded-2xl text-center text-slate-400 italic">
+                Loading Purchase Order details or PO not found...
+              </div>
+            )}
           </div>
         )}
 
@@ -2585,8 +2592,18 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                                   tabIndex={0}
                                   data-kb-col
                                   className="p-1.5 text-blue-600 hover:bg-blue-50 hover:text-blue-700 rounded-lg kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                  title="Edit Draft"
                                 >
                                   <Edit size={16} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteGRNDraft(grn.id, toast, confirm)}
+                                  tabIndex={0}
+                                  data-kb-col
+                                  className="p-1.5 text-rose-600 hover:bg-rose-50 hover:text-rose-700 rounded-lg kb-focusable focus:ring-2 focus:ring-rose-500 focus:outline-none"
+                                  title="Delete Draft"
+                                >
+                                  <Trash size={16} />
                                 </button>
                                 <button
                                   onClick={() => {
@@ -2595,7 +2612,8 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                                   }}
                                   tabIndex={0}
                                   data-kb-col
-                                  className="p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 rounded-lg kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                  className="p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-650 rounded-lg kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                  title="View Details"
                                 >
                                   <ChevronRight size={16} />
                                 </button>
@@ -2608,7 +2626,8 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                                 }}
                                 tabIndex={0}
                                 data-kb-col
-                                className="p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 rounded-lg kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                className="p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-650 rounded-lg kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                title="View Details"
                               >
                                 <ChevronRight size={16} />
                               </button>
@@ -2840,6 +2859,7 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                   <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
                     <button type="button" onClick={() => resetNavigation('grn', 'list')} tabIndex={0} className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-bold uppercase cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">Cancel</button>
                     <button type="button" onClick={handleGRNDraftSubmitLocal} tabIndex={0} className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-bold uppercase cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">Save Draft</button>
+
                     <button type="submit" disabled={!selectedPOId || grnItems.length === 0}
                       tabIndex={0}
                       className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-xl text-xs font-black uppercase shadow-sm cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">
@@ -2923,6 +2943,12 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                     </table>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {currentSubView === 'details' && !selectedGRN && (
+              <div className="bg-white border border-slate-200 p-8 rounded-2xl text-center text-slate-400 italic">
+                Loading Goods Receipt Note details...
               </div>
             )}
           </div>

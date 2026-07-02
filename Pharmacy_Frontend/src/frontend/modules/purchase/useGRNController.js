@@ -289,6 +289,24 @@ export function useGRNController() {
     return false;
   };
 
+  const handleDeleteGRNDraft = async (grnId, toast, confirm) => {
+    const ok = await confirm(`Are you sure you want to delete GRN Draft ${grnId}?`);
+    if (!ok) return false;
+
+    try {
+      const res = await purchaseAPI.deleteGRN(grnId);
+      if (res && res.success) {
+        toast.success(`GRN Draft ${grnId} deleted successfully.`);
+        setGoodsReceipts(prev => prev.filter(g => g.id !== grnId));
+        return true;
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to delete GRN Draft: ' + err.message);
+    }
+    return false;
+  };
+
   return {
     goodsReceipts,
     setGoodsReceipts,
@@ -307,6 +325,7 @@ export function useGRNController() {
     loadDraftGRN,
     editingDraftId, setEditingDraftId,
     updateGrnItem,
-    handleSubmitGRN
+    handleSubmitGRN,
+    handleDeleteGRNDraft
   };
 }

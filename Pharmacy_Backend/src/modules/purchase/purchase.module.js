@@ -169,6 +169,20 @@ const purchaseRepo = {
     });
   },
 
+  findAllPOs: async () => {
+    return prisma.purchaseOrder.findMany({
+      include: { supplier: true, items: { include: { medicine: true } } },
+      orderBy: { createdAt: 'desc' }
+    });
+  },
+
+  findPOById: async (id) => {
+    return prisma.purchaseOrder.findUnique({
+      where: { id },
+      include: { supplier: true, items: { include: { medicine: true } }, grns: true }
+    });
+  },
+
 
 
   updatePO: async (id, data) => {
@@ -266,7 +280,7 @@ const purchaseRepo = {
   // ── GRNs ───────────────────────────────────────────────────────────────────
   createGRN: async (data) => {
     const { items, ...rest } = data;
-    return prisma.goodsReceipt.create({
+    return prisma.gRN.create({
       data: {
         ...rest,
         receivedDate: rest.receivedDate ? new Date(rest.receivedDate) : new Date(),
@@ -287,12 +301,12 @@ const purchaseRepo = {
     });
   },
 
-  findAllGRNs: async () => prisma.goodsReceipt.findMany({
+  findAllGRNs: async () => prisma.gRN.findMany({
     include: { items: true, purchaseOrder: { include: { supplier: true } } },
     orderBy: { createdAt: 'desc' }
   }),
 
-  findGRNById: async (id) => prisma.goodsReceipt.findUnique({
+  findGRNById: async (id) => prisma.gRN.findUnique({
     where: { id },
     include: { items: true, purchaseOrder: { include: { supplier: true } } }
   })
@@ -398,6 +412,15 @@ export const purchaseService = {
   },
 
   getAllPOs: async () => purchaseRepo.findAllPOs(),
+  getCompletedPOs: async () => {
+    return prisma.purchaseOrder.findMany({
+      where: {
+        status: { in: ['Completed', 'COMPLETED', 'Closed'] }
+      },
+      include: { supplier: true, items: { include: { medicine: true } } },
+      orderBy: { updatedAt: 'desc' }
+    });
+  },
   getPOById: async (id) => {
     const p = await purchaseRepo.findPOById(id);
     if (!p) throw new AppError('Purchase Order not found', 404, 'NOT_FOUND');
@@ -674,9 +697,9 @@ export const purchaseService = {
           acceptedQty: accepted,
           pendingQty: pending,
           cancelledQty: cancelled,
-          batchNumber: item.batchNumber || 'N/A',
-          expiryDate: item.expiryDate ? new Date(item.expiryDate) : new Date(),
-          mfgDate: item.mfgDate ? new Date(item.mfgDate) : new Date(),
+          batchNumber: item.batchNumber ? item.batchNumber.trim() : null,
+          expiryDate: item.expiryDate ? new Date(item.expiryDate) : null,
+          mfgDate: item.mfgDate ? new Date(item.mfgDate) : null,
           status: itemStatus,
           remarks: item.remarks || '',
           cancelledBy: item.cancelledBy || null,
@@ -920,7 +943,9 @@ export const purchaseService = {
     return g;
   },
 
-
+  getCompletedGRNs: async () => {
+    return prisma.gRN.findMany({
+      where: { savedAsDraft: false },
       include: {
         items: true, purchaseOrder: { include: { supplier: true } }
       },
@@ -954,28 +979,15 @@ export const purchaseService = {
     const grn = await prisma.gRN.findUnique({ where: { id } });
     if (!grn) throw new AppError('GRN not found', 404);
     
-    // Process update logic similar to createGRN but replacing the existing one
-    // Since this is updating an existing GRN, we just update fields for now
-    // Actually, in an ERP, modifying a saved GRN draft is allowed.
-    // If it's finalized, it might be restricted.
-    
-    // To implement GRN Draft Editability properly, we update it
-    const updateData = {
-      invoiceNumber: data.invoiceNumber || grn.invoiceNumber,
-      savedAsDraft: data.savedAsDraft !== undefined ? data.savedAsDraft : grn.savedAsDraft,
-      status: data.savedAsDraft ? 'Draft' : 'COMPLETED'
-    };
-    
-    const updatedGrn = await prisma.gRN.update({
-      where: { id },
-      data: updateData,
-      include: {
-        items: true,
-        purchaseOrder: { include: { supplier: true } }
-      }
+    // Delegate to createGRN to run the transaction logic (deleting/recreating items, updating stock if final, etc.)
+    return purchaseService.createGRN({ ...data, id }, user);
+  },
+
+  getGRNByPOId: async (poId) => {
+    return prisma.gRN.findMany({
+      where: { poId },
+      include: { items: true }
     });
-    
-    return updatedGrn;
   },
 
   getLowStockMedicines: async () => {
@@ -1158,13 +1170,32 @@ export const purchaseService = {
   },
 
   getGRNByPOId: async (poId) => {
-    return prisma.goodsReceipt.findMany({
+    return prisma.gRN.findMany({
       where: { poId },
       include: { items: { include: { medicine: true } } }
     });
   },
 
-  getProcurementHistory: async () => { const pos = await prisma.purchaseOrder.findMany({}); return pos.map(po => ({...po, grns: po.goodsReceipts, shipments: []})); }
+  getProcurementHistory: async () => {
+    const pos = await prisma.purchaseOrder.findMany({
+      include: { grns: true }
+    });
+    return pos.map(po => ({ ...po, grns: po.grns || [], shipments: [] }));
+  },
+
+  deleteGRN: async (id) => {
+    const grn = await prisma.gRN.findUnique({ where: { id } });
+    if (!grn) throw new AppError('GRN not found', 404, 'NOT_FOUND');
+    if (!grn.savedAsDraft && grn.status !== 'Draft') {
+      throw new AppError('Only Draft Goods Receipt Notes can be deleted.', 400, 'BAD_REQUEST');
+    }
+    return prisma.$transaction(async (tx) => {
+      // 1. Delete associated GRN items
+      await tx.gRNItem.deleteMany({ where: { grnId: id } });
+      // 2. Delete the GRN draft itself
+      return tx.gRN.delete({ where: { id } });
+    });
+  }
 };
 
 // ─── PURCHASE CONTROLLER ─────────────────────────────────────────────────────
@@ -1395,6 +1426,13 @@ export const purchaseController = {
     try {
       const d = await purchaseService.updateGRN(req.params.id, req.body, req.user);
       res.json({ success: true, data: d, message: 'GRN updated successfully.' });
+    } catch (e) { next(e); }
+  },
+
+  deleteGRN: async (req, res, next) => {
+    try {
+      const d = await purchaseService.deleteGRN(req.params.id);
+      res.json({ success: true, data: d, message: 'GRN Draft deleted successfully.' });
     } catch (e) { next(e); }
   },
 

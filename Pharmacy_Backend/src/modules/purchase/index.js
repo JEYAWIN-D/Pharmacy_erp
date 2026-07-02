@@ -47,6 +47,7 @@ router.get('/grn', purchaseController.getAllGRNs);
 router.get('/grn/:id', purchaseController.getGRNById);
 router.post('/grn', purchaseController.createGRN);
 router.put('/grn/:id', purchaseController.updateGRN);
+router.delete('/grn/:id', purchaseController.deleteGRN);
 router.put('/stock', purchaseController.updateStockAfterGRN);
 
 // ── Procurement History ────────────────────────────────────────────────────────
