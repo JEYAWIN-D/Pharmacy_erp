@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 
-const API = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api') + '/suppliers';
+const API = (import.meta.env.VITE_API_URL || 'http://localhost:5002/api') + '/suppliers';
 
 const getHeaders = () => {
   const token = localStorage.getItem('pharmacy_token');
@@ -76,7 +76,7 @@ export function useSupplierController() {
         api.get('/documents'),
         api.get('/performance'),
         api.get('/purchase-orders'),
-        axios.get(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/medicines`, { headers: getHeaders(), params: { limit: 1000 } })
+        axios.get(`${import.meta.env.VITE_API_URL || 'http://localhost:5002/api'}/medicines`, { headers: getHeaders(), params: { limit: 1000 } })
       ]);
 
       const extract = (r) => r.status === 'fulfilled' && r.value?.data?.success ? (r.value.data.data || []) : [];

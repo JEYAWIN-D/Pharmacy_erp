@@ -169,23 +169,7 @@ const purchaseRepo = {
     });
   },
 
-  findAllPOs: async () => prisma.purchaseOrder.findMany({
-    include: {
-      items: { include: { medicine: true } },
-      supplier: true,
-      grns: { include: { items: true } }
-    },
-    orderBy: { createdAt: 'desc' }
-  }),
 
-  findPOById: async (id) => prisma.purchaseOrder.findUnique({
-    where: { id },
-    include: {
-      items: { include: { medicine: true } },
-      supplier: true,
-      grns: { include: { items: true } }
-    }
-  }),
 
   updatePO: async (id, data) => {
     const { expectedDelivery, items, ...rest } = data;
@@ -271,45 +255,18 @@ const purchaseRepo = {
   },
 
   // ── Shipments ──────────────────────────────────────────────────────────────
-  createShipment: async (data) => {
-    const { items, ...rest } = data;
-    return prisma.shipment.create({
-      data: {
-        ...rest,
-        dispatchDate: rest.dispatchDate ? new Date(rest.dispatchDate) : new Date(),
-        expectedDeliveryDate: rest.expectedDeliveryDate ? new Date(rest.expectedDeliveryDate) : null,
-        deliveryDate: rest.deliveryDate ? new Date(rest.deliveryDate) : null,
-        items: {
-          create: (items || []).map(item => ({
-            medicineId: item.medicineId,
-            qty: parseInt(item.qty) || 0
-          }))
-        }
-      },
-      include: { items: true, purchaseOrder: true }
-    });
-  },
+  createShipment: async (data) => { return null; },
 
-  findShipmentById: async (id) => prisma.shipment.findUnique({
-    where: { id },
-    include: { items: { include: { medicine: true } }, purchaseOrder: true }
-  }),
+  findShipmentById: async (id) => { return null; },
 
-  findAllShipments: async () => prisma.shipment.findMany({
-    include: { items: { include: { medicine: true } }, purchaseOrder: true },
-    orderBy: { createdAt: 'desc' }
-  }),
+  findAllShipments: async () => { return []; },
 
-  updateShipment: async (id, data) => prisma.shipment.update({
-    where: { id },
-    data,
-    include: { items: true }
-  }),
+  updateShipment: async (id, data) => { return null; },
 
   // ── GRNs ───────────────────────────────────────────────────────────────────
   createGRN: async (data) => {
     const { items, ...rest } = data;
-    return prisma.gRN.create({
+    return prisma.goodsReceipt.create({
       data: {
         ...rest,
         receivedDate: rest.receivedDate ? new Date(rest.receivedDate) : new Date(),
@@ -330,14 +287,14 @@ const purchaseRepo = {
     });
   },
 
-  findAllGRNs: async () => prisma.gRN.findMany({
-    include: { items: { include: { medicine: true } }, purchaseOrder: { include: { supplier: true } } },
+  findAllGRNs: async () => prisma.goodsReceipt.findMany({
+    include: { items: true, purchaseOrder: { include: { supplier: true } } },
     orderBy: { createdAt: 'desc' }
   }),
 
-  findGRNById: async (id) => prisma.gRN.findUnique({
+  findGRNById: async (id) => prisma.goodsReceipt.findUnique({
     where: { id },
-    include: { items: { include: { medicine: true } }, purchaseOrder: { include: { supplier: true } } }
+    include: { items: true, purchaseOrder: { include: { supplier: true } } }
   })
 };
 
@@ -603,6 +560,7 @@ export const purchaseService = {
   createGRN: async (data, user) => {
     const { id, poId, shipmentId, invoiceNumber, receivedBy, items, savedAsDraft } = data;
     if (!poId) throw new AppError('Purchase Order ID is required', 400, 'BAD_REQUEST');
+
 
     return prisma.$transaction(async (tx) => {
       const po = await tx.purchaseOrder.findUnique({
@@ -962,26 +920,9 @@ export const purchaseService = {
     return g;
   },
 
-  getCompletedPOs: async () => {
-    return prisma.purchaseOrder.findMany({
-      where: { status: { in: ['COMPLETED', 'Completed'] } },
-      include: {
-        items: { include: { medicine: true } },
-        supplier: true,
-        grns: { include: { items: true } }
-      },
-      orderBy: { updatedAt: 'desc' }
-    });
-  },
 
-  getCompletedGRNs: async () => {
-    return prisma.gRN.findMany({
-      where: {
-        status: { in: ['COMPLETED', 'Completed', 'Approved', 'Finalized'] }
-      },
       include: {
-        items: { include: { medicine: true } },
-        purchaseOrder: { include: { supplier: true } }
+        items: true, purchaseOrder: { include: { supplier: true } }
       },
       orderBy: { createdAt: 'desc' }
     });
@@ -1217,31 +1158,13 @@ export const purchaseService = {
   },
 
   getGRNByPOId: async (poId) => {
-    return prisma.gRN.findMany({
+    return prisma.goodsReceipt.findMany({
       where: { poId },
       include: { items: { include: { medicine: true } } }
     });
   },
 
-  getProcurementHistory: async () => {
-    return prisma.purchaseOrder.findMany({
-      where: {
-        status: { in: ['COMPLETED', 'CANCELLED', 'Completed', 'Cancelled'] }
-      },
-      include: {
-        items: { include: { medicine: true } },
-        supplier: true,
-        grns: {
-          include: {
-            items: true
-          }
-        }
-      },
-      orderBy: {
-        updatedAt: 'desc'
-      }
-    });
-  }
+  getProcurementHistory: async () => { const pos = await prisma.purchaseOrder.findMany({}); return pos.map(po => ({...po, grns: po.goodsReceipts, shipments: []})); }
 };
 
 // ─── PURCHASE CONTROLLER ─────────────────────────────────────────────────────
