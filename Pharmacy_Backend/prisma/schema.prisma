@@ -92,6 +92,8 @@ model Medicine {
   purchaseRequestItems PurchaseRequestItem[]
   supplierReturnItems  SupplierReturnItem[]
   warehouseStocks      WarehouseStock[]
+  grnItems             GRNItem[]
+  stockLedgers         StockLedger[]
 
   @@map("medicines")
 }
@@ -144,6 +146,7 @@ model Supplier {
   supplierPayments       SupplierPayment[]
   supplierReturns        SupplierReturn[]
   supplierCategories     SupplierCategory[]
+  grns                   GRN[]
   supplierBrandMappings  SupplierBrandMapping[]
   purchaseTerms          PurchaseTerm[]
   supplierPriceHistory   SupplierPriceHistory[]
@@ -368,63 +371,90 @@ model PurchaseRequestItem {
 }
 
 model PurchaseOrder {
-  id            String              @id @default(uuid())
-  supplierId    String?
-  prId          String?
-  orderDate     DateTime            @default(now())
-  total         Decimal             @default(0) @db.Decimal(10, 2)
-  status        String              @default("Pending Approval")
-  createdBy     String?
-  updatedAt     DateTime            @updatedAt
-  createdAt     DateTime            @default(now())
-  goodsReceipts GoodsReceipt[]
-  items         PurchaseOrderItem[]
-  supplier      Supplier?           @relation(fields: [supplierId], references: [id])
+  id                  String              @id @map("po_id")
+  supplierId          String?             @map("supplier_id")
+  prId                String?             @map("pr_id")
+  poDate              DateTime            @default(now()) @map("po_date")
+  poTime              String?             @map("po_time")
+  status              String              @default("Draft")
+  subtotal            Decimal             @default(0) @db.Decimal(10, 2) @map("subtotal")
+  total               Decimal             @default(0) @db.Decimal(10, 2) @map("total_amount")
+  paymentTerms        String?             @default("Net 30") @map("payment_terms")
+  communicationMethod String?             @default("Email") @map("communication_method")
+  createdBy           String?             @map("created_by")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+  createdAt           DateTime            @default(now()) @map("created_at")
+  grns                GRN[]
+  items               PurchaseOrderItem[]
+  supplier            Supplier?           @relation(fields: [supplierId], references: [id])
 
   @@map("purchase_orders")
 }
 
 model PurchaseOrderItem {
-  id              Int           @id @default(autoincrement())
-  purchaseOrderId String
-  medicineId      String
-  medicineName    String?
-  qty             Int
-  unitPrice       Decimal       @db.Decimal(10, 2)
-  total           Decimal       @db.Decimal(10, 2)
+  id              Int           @id @default(autoincrement()) @map("po_item_id")
+  purchaseOrderId String        @map("po_id")
+  medicineId      String        @map("medicine_id")
+  medicineName    String?       @map("medicine_name")
+  qty             Int           @map("ordered_qty")
+  defaultPrice    Decimal       @default(0) @db.Decimal(10, 2) @map("default_price")
+  unitPrice       Decimal       @db.Decimal(10, 2) @map("modified_price")
+  tax             Decimal?      @default(0) @db.Decimal(5, 2)
+  total           Decimal       @db.Decimal(10, 2) @map("item_total")
+  receivedQty     Int           @default(0) @map("received_qty")
+  damagedQty      Int           @default(0) @map("damaged_qty")
+  cancelledQty    Int           @default(0) @map("cancelled_qty")
+  status          String        @default("Pending") @map("item_status")
   medicine        Medicine      @relation(fields: [medicineId], references: [id])
   purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
 
   @@map("purchase_order_items")
 }
 
-model GoodsReceipt {
-  id            String             @id @default(uuid())
-  poId          String?
-  supplierId    String?
-  supplierName  String?
-  receivedDate  DateTime           @default(now())
-  receivedBy    String?
-  status        String             @default("Completed")
-  createdAt     DateTime           @default(now())
-  items         GoodsReceiptItem[]
-  purchaseOrder PurchaseOrder?     @relation(fields: [poId], references: [id])
+model GRN {
+  id            String    @id @map("grn_id")
+  poId          String    @map("po_id")
+  supplierId    String?   @map("supplier_id")
+  shipmentId    String?   @map("shipment_id")
+  invoiceNumber String?   @map("invoice_number")
+  receivedDate  DateTime  @default(now()) @map("created_date")
+  receivedBy    String?   @map("received_by")
+  status        String    @default("Verified & Approved") @map("grn_status")
+  savedAsDraft  Boolean   @default(false) @map("saved_as_draft")
+  completedDate DateTime? @map("completed_date")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  items         GRNItem[]
+  purchaseOrder PurchaseOrder @relation(fields: [poId], references: [id])
+  supplier      Supplier?     @relation(fields: [supplierId], references: [id])
 
-  @@map("goods_receipts")
+  @@map("grn")
 }
 
-model GoodsReceiptItem {
-  id             Int          @id @default(autoincrement())
-  goodsReceiptId String
-  medicineId     String?
-  medicineName   String?
-  batchNumber    String?
-  expiryDate     DateTime?
-  receivedQty    Int
-  unitPrice      Decimal      @db.Decimal(10, 2)
-  goodsReceipt   GoodsReceipt @relation(fields: [goodsReceiptId], references: [id])
+model GRNItem {
+  id            Int      @id @default(autoincrement()) @map("grn_item_id")
+  grnId         String   @map("grn_id")
+  medicineId    String   @map("medicine_id")
+  medicineName  String?  @map("medicine_name")
+  orderedQty    Int      @default(0) @map("ordered_qty")
+  receivedQty   Int      @default(0) @map("received_qty")
+  damagedQty    Int      @default(0) @map("damaged_qty")
+  acceptedQty   Int      @default(0) @map("accepted_qty")
+  pendingQty    Int      @default(0) @map("pending_qty")
+  cancelledQty  Int      @default(0) @map("cancelled_qty")
+  batchNumber   String   @map("batch_number")
+  expiryDate    DateTime @map("expiry_date")
+  mfgDate       DateTime @map("mfg_date")
+  status        String   @default("Pending") @map("item_status")
+  remarks       String?  @map("remarks")
+  cancelledBy   String?  @map("cancelled_by")
+  cancelledDate String?  @map("cancelled_date")
+  cancelledTime String?  @map("cancelled_time")
+  cancelReason  String?  @map("cancel_reason")
+  grn           GRN      @relation(fields: [grnId], references: [id])
+  medicine      Medicine @relation(fields: [medicineId], references: [id])
 
-  @@map("goods_receipt_items")
+  @@map("grn_items")
 }
 
 model Prescription {
@@ -1042,4 +1072,17 @@ model SupplierAuditLog {
   supplier   Supplier? @relation(fields: [supplierId], references: [id])
 
   @@map("supplier_audit_logs")
+}
+
+model StockLedger {
+  id              String   @id @default(uuid()) @map("stock_ledger_id")
+  medicineId      String   @map("medicine_id")
+  batchNumber     String   @map("batch_number")
+  transactionType String   @map("transaction_type")
+  quantity        Int      @map("quantity")
+  referenceId     String   @map("reference_id")
+  createdDate     DateTime @default(now()) @map("created_date")
+  medicine        Medicine @relation(fields: [medicineId], references: [id])
+
+  @@map("stock_ledger")
 }

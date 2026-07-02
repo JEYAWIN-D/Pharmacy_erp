@@ -134,12 +134,32 @@ export const purchaseAPI = {
 
   // Low Stock
   getLowStock: () => request('GET', '/purchase/low-stock'),
+  createPOFromLowStock: (body) => request('POST', '/purchase/orders/from-low-stock', body),
 
   // GRN
   getAllGRNs: () => request('GET', '/purchase/grn'),
   getGRN: (id) => request('GET', `/purchase/grn/${id}`),
   createGRN: (body) => request('POST', '/purchase/grn', body),
-  getCompletedGRNs: () => request('GET', '/purchase/grn/completed')
+  getCompletedGRNs: () => request('GET', '/purchase/grn/completed'),
+
+  // Confirm & Cancel PO
+  confirmPO: (id) => request('PUT', `/purchase/orders/${id}/confirm`),
+  cancelPO: (id) => request('PUT', `/purchase/orders/${id}/cancel`),
+  getPOProgress: (id) => request('GET', `/purchase/orders/${id}/progress`),
+
+  // GRN by PO
+  getGRNByPOId: (poId) => request('GET', `/purchase/grn/po/${poId}`),
+
+  // GRN Validation & Update
+  validateInvoiceNumber: (supplierId, invoiceNumber, excludeGrnId = '') => 
+    request('GET', `/purchase/grn/validate-invoice?supplierId=${supplierId}&invoiceNumber=${invoiceNumber}&excludeGrnId=${excludeGrnId}`),
+  updateGRN: (id, body) => request('PUT', `/purchase/grn/${id}`, body),
+
+  // Procurement History
+  getProcurementHistory: () => request('GET', '/purchase/history'),
+
+  // Stock update after GRN
+  updateStockAfterGRN: (body) => request('PUT', '/purchase/stock', body)
 };
 
 // ─── Prescriptions ────────────────────────────────────────────────────────────

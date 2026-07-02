@@ -1,0 +1,15 @@
+SUCCESS:
+Prisma schema loaded from prisma\schema.prisma
+Datasource "db": PostgreSQL database "pharmacy", schema "public" at "localhost:5432"
+
+The PostgreSQL database "pharmacy" schema "public" at "localhost:5432" was successfully reset.
+
+Your database is now in sync with your Prisma schema. Done in 1.04s
+
+Running generate... (Use --skip-generate to skip the generators)
+[2K[1A[2K[GRunning generate... - Prisma Client
+[2K[1A[2K[GEPERM: operation not permitted, rename 'D:\MY PROJECTS\Pharmacy_erp\Pharmacy_Bac
+kend\node_modules\.prisma\client\query_engine-windows.dll.node.tmp25436' -> 'D:\
+MY PROJECTS\Pharmacy_erp\Pharmacy_Backend\node_modules\.prisma\client\query_engi
+ne-windows.dll.node'
+
