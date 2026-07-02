@@ -29,7 +29,7 @@ export default function Auth() {
     setLoginError('');
     setLoginLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/auth/login', {
+      const res = await fetch('http://localhost:5002/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: loginEmail, password: loginPassword })
@@ -57,7 +57,7 @@ export default function Auth() {
       let roleName = 'Pharmacist';
       let roleId = undefined;
       try {
-        const rolesRes = await fetch('http://localhost:5000/api/auth/roles');
+        const rolesRes = await fetch('http://localhost:5002/api/auth/roles');
         const rolesData = await rolesRes.json();
         const roles = rolesData.data || [];
         const pharmacistRole = roles.find(r => r.name?.toLowerCase().includes('pharmacist')) || roles[0];
@@ -67,7 +67,7 @@ export default function Auth() {
         }
       } catch (_) { /* use default roleName */ }
 
-      const res = await fetch('http://localhost:5000/api/auth/register', {
+      const res = await fetch('http://localhost:5002/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
