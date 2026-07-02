@@ -5,6 +5,34 @@ import { AppError } from '../../shared/errors/AppError.js';
 const getSupplierName = (sup) =>
   sup ? (typeof sup === 'object' ? sup.name : sup) : 'Unknown Supplier';
 
+const generatePOId = async (prId) => {
+  let prSeq = '000';
+  if (prId) {
+    const match = prId.match(/^PR-(\d+)$/);
+    if (match) {
+      prSeq = match[1];
+    }
+  }
+
+  const allPOs = await prisma.purchaseOrder.findMany({
+    select: { id: true }
+  });
+
+  let maxSeq = 0;
+  for (const po of allPOs) {
+    const match = po.id.match(/^PO-\d+-(\d+)$/);
+    if (match) {
+      const seq = parseInt(match[1], 10);
+      if (seq > maxSeq) {
+        maxSeq = seq;
+      }
+    }
+  }
+
+  const nextSeq = maxSeq + 1;
+  return `PO-${prSeq}-${String(nextSeq).padStart(3, '0')}`;
+};
+
 // ─── PURCHASE REPOSITORY ─────────────────────────────────────────────────────
 const purchaseRepo = {
   // ── Purchase Requests ──────────────────────────────────────────────────────
@@ -89,23 +117,52 @@ const purchaseRepo = {
   // ── Purchase Orders ────────────────────────────────────────────────────────
   createPO: async (data) => {
     const { items, ...rest } = data;
+    const poId = await generatePOId(rest.prId);
+
+    const itemsData = [];
+    let subtotalVal = 0;
+    let totalVal = 0;
+
+    for (const item of (items || [])) {
+      const med = await prisma.medicine.findUnique({ where: { id: item.medicineId } });
+      const defaultPrice = med ? Number(med.pricePerPiece || 0) : 0;
+      const orderedQty = parseInt(item.qty) || 0;
+      const modifiedPrice = item.unitPrice !== undefined ? parseFloat(item.unitPrice) : defaultPrice;
+      const taxRate = item.tax !== undefined ? parseFloat(item.tax) : (med ? Number(med.taxPercentage || 0) : 0);
+      const itemTotal = orderedQty * modifiedPrice * (1 + (taxRate / 100));
+
+      subtotalVal += orderedQty * modifiedPrice;
+      totalVal += itemTotal;
+
+      itemsData.push({
+        medicineId: item.medicineId,
+        medicineName: item.medicineName || med?.medicineName || 'Unknown Medicine',
+        qty: orderedQty,
+        defaultPrice: defaultPrice,
+        unitPrice: modifiedPrice,
+        tax: taxRate,
+        total: itemTotal,
+        receivedQty: 0,
+        damagedQty: 0,
+        cancelledQty: 0,
+        status: 'Pending'
+      });
+    }
+
+    const now = new Date();
+    const poTimeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
     return prisma.purchaseOrder.create({
       data: {
         ...rest,
+        id: poId,
+        poDate: now,
+        poTime: poTimeStr,
+        subtotal: subtotalVal,
+        total: totalVal,
         expectedDelivery: rest.expectedDelivery ? new Date(rest.expectedDelivery) : null,
         items: {
-          create: (items || []).map(item => ({
-            medicineId: item.medicineId,
-            medicineName: item.medicineName,
-            qty: parseInt(item.qty) || 0,
-            unitPrice: parseFloat(item.unitPrice) || 0,
-            tax: item.tax ? parseFloat(item.tax) : 0,
-            total: (parseInt(item.qty) || 0) * (parseFloat(item.unitPrice) || 0) * (1 + (parseFloat(item.tax || 0) / 100)),
-            receivedQty: 0,
-            damagedQty: 0,
-            cancelledQty: 0,
-            status: 'Pending'
-          }))
+          create: itemsData
         }
       },
       include: { items: { include: { medicine: true } }, supplier: true }
@@ -116,7 +173,6 @@ const purchaseRepo = {
     include: {
       items: { include: { medicine: true } },
       supplier: true,
-      shipments: true,
       grns: { include: { items: true } }
     },
     orderBy: { createdAt: 'desc' }
@@ -127,7 +183,6 @@ const purchaseRepo = {
     include: {
       items: { include: { medicine: true } },
       supplier: true,
-      shipments: { include: { items: true } },
       grns: { include: { items: true } }
     }
   }),
@@ -174,12 +229,14 @@ const purchaseRepo = {
             });
           } else {
             const med = await tx.medicine.findUnique({ where: { id: item.medicineId } });
+            const defaultPrice = med ? Number(med.pricePerPiece || 0) : 0;
             await tx.purchaseOrderItem.create({
               data: {
                 purchaseOrderId: id,
                 medicineId: item.medicineId,
                 medicineName: med ? med.medicineName : 'Unknown',
                 qty: orderQty,
+                defaultPrice: defaultPrice,
                 unitPrice: unitPrice,
                 tax: tax,
                 total: total,
@@ -193,16 +250,18 @@ const purchaseRepo = {
         }
       }
 
-      // Re-calculate grand total
+      // Re-calculate grand total and subtotal
       const allPOItems = await tx.purchaseOrderItem.findMany({
         where: { purchaseOrderId: id }
       });
+      const poSubtotal = allPOItems.reduce((sum, item) => sum + (Number(item.qty || 0) * Number(item.unitPrice || 0)), 0);
       const poTotal = allPOItems.reduce((sum, item) => sum + Number(item.total || 0), 0);
 
       return tx.purchaseOrder.update({
         where: { id },
         data: {
           ...rest,
+          subtotal: poSubtotal,
           total: poTotal,
           ...(expectedDelivery !== undefined ? { expectedDelivery: expectedDelivery ? new Date(expectedDelivery) : null } : {})
         },
@@ -314,21 +373,19 @@ export const purchaseService = {
           prisma.purchaseRequestItem.update({
             where: { id: parseInt(item.itemId) },
             data: { 
-              status: item.status, // 'Approved' or 'Rejected'
+              status: item.status,
               remarks: item.remarks || undefined
             }
           })
         )
       );
     } else {
-      // If no details provided, approve all pending items by default
       await prisma.purchaseRequestItem.updateMany({
         where: { purchaseRequestId: id, status: 'Pending' },
         data: { status: 'Approved' }
       });
     }
 
-    // Re-fetch updated items to decide overall status
     const updatedPR = await purchaseRepo.findPRById(id);
     const totalItems = updatedPR.items.length;
     const approvedCount = updatedPR.items.filter(i => i.status === 'Approved').length;
@@ -344,7 +401,6 @@ export const purchaseService = {
         overallStatus = 'Partially Approved';
       }
     } else {
-      // Still some items are Pending
       if (approvedCount > 0) {
         overallStatus = 'Partially Approved';
       } else {
@@ -369,7 +425,6 @@ export const purchaseService = {
 
   // ── PO Services ──────────────────────────────────────────────────────────
   createPO: async (data) => {
-    // If PO is generated from PR, check duplicate PO creation
     if (data.prId) {
       const existingPO = await prisma.purchaseOrder.findFirst({
         where: {
@@ -411,7 +466,6 @@ export const purchaseService = {
       throw new AppError('Purchase Request must be approved first', 400, 'NOT_APPROVED');
     }
 
-    // Check duplicate PO
     const existingPO = await prisma.purchaseOrder.findFirst({
       where: {
         prId,
@@ -422,7 +476,6 @@ export const purchaseService = {
       throw new AppError(`A Purchase Order (${existingPO.id}) has already been generated from this Purchase Request.`, 400, 'DUPLICATE_PO');
     }
 
-    // Filter approved items
     const approvedItems = pr.items.filter(item => item.status === 'Approved');
     if (approvedItems.length === 0) {
       throw new AppError('No approved medicines in this Purchase Request.', 400, 'NO_APPROVED_ITEMS');
@@ -455,14 +508,13 @@ export const purchaseService = {
     const po = await purchaseRepo.findPOById(id);
     if (!po) throw new AppError('Purchase Order not found', 404, 'NOT_FOUND');
     if (po.status !== 'Draft') throw new AppError('Only Draft POs can be sent.', 400, 'INVALID_STATUS');
-    return purchaseRepo.updatePO(id, { status: 'Sent', orderDate: new Date() });
+    return purchaseRepo.updatePO(id, { status: 'Sent', poDate: new Date() });
   },
 
   closePO: async (id) => {
     const po = await purchaseRepo.findPOById(id);
     if (!po) throw new AppError('Purchase Order not found', 404, 'NOT_FOUND');
     
-    // Validate that all items are received or cancelled
     const allProcessed = po.items.every(item => {
       return (item.receivedQty || 0) + (item.cancelledQty || 0) >= item.qty;
     });
@@ -489,7 +541,6 @@ export const purchaseService = {
       throw new AppError(`Cannot create shipments for PO in ${po.status} state.`, 400, 'INVALID_PO_STATE');
     }
 
-    // Validate quantities
     for (const item of (items || [])) {
       const poItem = po.items.find(pi => pi.medicineId === item.medicineId);
       if (!poItem) {
@@ -500,10 +551,8 @@ export const purchaseService = {
       }
     }
 
-    // Create Shipment
     const shipment = await purchaseRepo.createShipment(data);
 
-    // Update PO status to Shipped or In Transit if current status is Sent/Accepted
     if (po.status === 'Sent' || po.status === 'Accepted') {
       await purchaseRepo.updatePO(poId, { status: 'Shipped' });
     }
@@ -552,22 +601,10 @@ export const purchaseService = {
 
   // ── GRN Services ──────────────────────────────────────────────────────────
   createGRN: async (data, user) => {
-    const { poId, shipmentId, invoiceNumber, receivedBy, items } = data;
+    const { id, poId, shipmentId, invoiceNumber, receivedBy, items, savedAsDraft } = data;
     if (!poId) throw new AppError('Purchase Order ID is required', 400, 'BAD_REQUEST');
-    if (!invoiceNumber || !invoiceNumber.trim()) throw new AppError('Supplier Invoice reference number is required', 400, 'BAD_REQUEST');
-
-    // Duplicate GRN guard for shipments
-    if (shipmentId) {
-      const existingGRN = await prisma.gRN.findFirst({
-        where: { shipmentId }
-      });
-      if (existingGRN) {
-        throw new AppError(`A GRN (${existingGRN.id}) has already been recorded for this Shipment. Duplicate entry blocked.`, 400, 'DUPLICATE_GRN');
-      }
-    }
 
     return prisma.$transaction(async (tx) => {
-      // 1. Fetch Purchase Order and verify status
       const po = await tx.purchaseOrder.findUnique({
         where: { id: poId },
         include: { items: true }
@@ -577,238 +614,344 @@ export const purchaseService = {
         throw new AppError('This Purchase Order is already Completed. No further GRNs can be recorded.', 400, 'READ_ONLY_ORDER');
       }
 
-      // 2. Perform validations on each item
+      const grnId = id || `GRN-${Date.now().toString().slice(-4)}`;
+      const isFinal = !savedAsDraft;
+
+      if (isFinal) {
+        if (!invoiceNumber || !invoiceNumber.trim()) {
+          throw new AppError('Supplier Invoice reference number is required before final GRN save.', 400, 'BAD_REQUEST');
+        }
+
+        const existingInvoice = await tx.gRN.findFirst({
+          where: {
+            supplierId: po.supplierId,
+            invoiceNumber: invoiceNumber.trim(),
+            id: { not: grnId }
+          }
+        });
+        if (existingInvoice) {
+          throw new AppError('This invoice number already exists for this supplier. Please request or enter a different invoice number.', 400, 'DUPLICATE_INVOICE');
+        }
+
+        if (shipmentId) {
+          const existingGRN = await tx.gRN.findFirst({
+            where: { shipmentId, id: { not: grnId } }
+          });
+          if (existingGRN) {
+            throw new AppError(`A GRN (${existingGRN.id}) has already been recorded for this Shipment. Duplicate entry blocked.`, 400, 'DUPLICATE_GRN');
+          }
+        }
+      }
+
+      if (id) {
+        await tx.gRNItem.deleteMany({
+          where: { grnId: id }
+        });
+      }
+
+      let grnStatus = 'Approved';
+      let allResolved = true;
+
+      const grnItemsToCreate = [];
       for (const item of (items || [])) {
         const poItem = po.items.find(pi => pi.medicineId === item.medicineId);
         if (!poItem) {
           throw new AppError(`Item ${item.medicineName} is not part of this Purchase Order.`, 400, 'INVALID_ITEM');
         }
 
-        const rx = parseInt(item.receivedQty) || 0; // Current accepted qty
-        const dmg = parseInt(item.damagedQty) || 0; // Current damaged qty
-        const remainingOrdered = poItem.qty - poItem.receivedQty - poItem.damagedQty;
-
-        if (rx + dmg <= 0) {
-          throw new AppError(`Total processed quantity (Received + Damaged) for ${item.medicineName} must be greater than zero.`, 400, 'INVALID_QUANTITY');
-        }
-        if (rx + dmg > remainingOrdered) {
-          throw new AppError(`Received quantity + damaged quantity (${rx + dmg}) for ${item.medicineName} cannot exceed the remaining ordered quantity (${remainingOrdered}).`, 400, 'EXCEEDED_ORDER_QTY');
-        }
-        if (rx > 0) {
-          if (!item.batchNumber || !item.batchNumber.trim()) {
-            throw new AppError(`Batch Number is mandatory for accepted items of ${item.medicineName}.`, 400, 'BATCH_REQUIRED');
-          }
-          if (!item.expiryDate) {
-            throw new AppError(`Expiry Date is mandatory for accepted items of ${item.medicineName}.`, 400, 'EXP_DATE_REQUIRED');
-          }
-          const exp = new Date(item.expiryDate);
-          const today = new Date();
-          if (exp <= today) {
-            throw new AppError(`Expired medicine ${item.medicineName} (Expiry: ${exp.toLocaleDateString()}) cannot be accepted.`, 400, 'EXPIRED_MEDICINE');
-          }
-        }
-      }
-
-      // 3. Create GRN & GRNItems
-      const grnId = `GRN-${Date.now().toString().slice(-4)}`;
-      const createdGRN = await tx.gRN.create({
-        data: {
-          id: grnId,
-          poId,
-          shipmentId: shipmentId || null,
-          invoiceNumber: invoiceNumber.trim(),
-          receivedBy: receivedBy || 'Inventory Staff',
-          status: 'Verified & Approved',
-          items: {
-            create: (items || []).map(item => ({
-              medicineId: item.medicineId,
-              medicineName: item.medicineName,
-              batchNumber: item.batchNumber || 'N/A',
-              expiryDate: item.expiryDate ? new Date(item.expiryDate) : new Date(),
-              mfgDate: item.mfgDate ? new Date(item.mfgDate) : new Date(),
-              receivedQty: parseInt(item.receivedQty) || 0,
-              damagedQty: parseInt(item.damagedQty) || 0,
-              remarks: item.remarks || ''
-            }))
-          }
-        },
-        include: { items: true }
-      });
-
-      // 4. Update Shipment status to Delivered if linked
-      if (shipmentId) {
-        await tx.shipment.update({
-          where: { id: shipmentId },
-          data: { status: 'Delivered', deliveryDate: new Date() }
-        });
-      }
-
-      // 5. Update PurchaseOrderItems quantities & stock
-      for (const item of (items || [])) {
+        const ordered = poItem.qty;
         const rx = parseInt(item.receivedQty) || 0;
         const dmg = parseInt(item.damagedQty) || 0;
-        const acceptedQty = rx;
+        const accepted = Math.max(0, rx - dmg);
+        const cancelled = parseInt(item.cancelledQty) || 0;
+        const pending = Math.max(0, ordered - poItem.receivedQty - rx - cancelled);
 
-        // Fetch PO Item
-        const poItem = po.items.find(pi => pi.medicineId === item.medicineId);
-        const newReceivedQty = poItem.receivedQty + rx;
-        const newDamagedQty = poItem.damagedQty + dmg;
+        if (isFinal) {
+          if (rx + cancelled <= 0) {
+            throw new AppError(`Total processed quantity (Received + Cancelled) for ${item.medicineName} must be greater than zero.`, 400, 'INVALID_QUANTITY');
+          }
+          const remainingOrdered = ordered - poItem.receivedQty - poItem.cancelledQty;
+          if (rx + cancelled > remainingOrdered) {
+            throw new AppError(`Received quantity + cancelled quantity (${rx + cancelled}) for ${item.medicineName} cannot exceed the remaining ordered quantity (${remainingOrdered}).`, 400, 'EXCEEDED_ORDER_QTY');
+          }
+          if (dmg > rx) {
+            throw new AppError(`Damaged quantity (${dmg}) cannot exceed received quantity (${rx}) for ${item.medicineName}.`, 400, 'INVALID_DAMAGED_QTY');
+          }
+          if (accepted > 0) {
+            if (!item.batchNumber || !item.batchNumber.trim()) {
+              throw new AppError(`Batch Number is mandatory for accepted items of ${item.medicineName}.`, 400, 'BATCH_REQUIRED');
+            }
+            if (!item.expiryDate) {
+              throw new AppError(`Expiry Date is mandatory for accepted items of ${item.medicineName}.`, 400, 'EXP_DATE_REQUIRED');
+            }
+            const exp = new Date(item.expiryDate);
+            const today = new Date();
+            if (exp <= today) {
+              throw new AppError(`Expired medicine ${item.medicineName} (Expiry: ${exp.toLocaleDateString()}) cannot be accepted.`, 400, 'EXPIRED_MEDICINE');
+            }
+          }
+        }
+
         let itemStatus = 'Pending';
-        if (newReceivedQty + newDamagedQty >= poItem.qty) {
+        if (cancelled > 0 && rx === 0) {
+          itemStatus = 'Cancelled';
+        } else if (dmg > 0 && accepted === 0) {
+          itemStatus = 'Damaged';
+        } else if (rx > 0 && pending === 0) {
           itemStatus = 'Received';
+        } else if (rx > 0) {
+          itemStatus = 'Partially Received';
         }
 
-        // Update PurchaseOrderItem
-        await tx.purchaseOrderItem.update({
-          where: { id: poItem.id },
+        if (pending > 0) {
+          allResolved = false;
+        }
+
+        grnItemsToCreate.push({
+          medicineId: item.medicineId,
+          medicineName: item.medicineName,
+          orderedQty: ordered,
+          receivedQty: rx,
+          damagedQty: dmg,
+          acceptedQty: accepted,
+          pendingQty: pending,
+          cancelledQty: cancelled,
+          batchNumber: item.batchNumber || 'N/A',
+          expiryDate: item.expiryDate ? new Date(item.expiryDate) : new Date(),
+          mfgDate: item.mfgDate ? new Date(item.mfgDate) : new Date(),
+          status: itemStatus,
+          remarks: item.remarks || '',
+          cancelledBy: item.cancelledBy || null,
+          cancelledDate: item.cancelledDate || null,
+          cancelledTime: item.cancelledTime || null,
+          cancelReason: item.cancelReason || null
+        });
+      }
+
+      if (allResolved && isFinal) {
+        grnStatus = 'Completed';
+      } else if (isFinal) {
+        grnStatus = 'Partially Received';
+      }
+
+      const grnData = {
+        poId,
+        supplierId: po.supplierId,
+        shipmentId: shipmentId || null,
+        invoiceNumber: invoiceNumber ? invoiceNumber.trim() : null,
+        receivedBy: receivedBy || 'Inventory Staff',
+        status: savedAsDraft ? 'Draft' : grnStatus,
+        savedAsDraft: !!savedAsDraft,
+        completedDate: savedAsDraft ? null : new Date(),
+        receivedDate: new Date()
+      };
+
+      const createdGRN = await tx.gRN.upsert({
+        where: { id: grnId },
+        update: grnData,
+        create: {
+          id: grnId,
+          ...grnData
+        }
+      });
+
+      for (const gi of grnItemsToCreate) {
+        await tx.gRNItem.create({
           data: {
-            receivedQty: newReceivedQty,
-            damagedQty: newDamagedQty,
-            status: itemStatus
+            grnId: createdGRN.id,
+            ...gi
           }
         });
+      }
 
-        if (acceptedQty <= 0) continue;
-
-        // 5a. Upsert MedicineBatch
-        const batchNo = item.batchNumber.trim();
-        const existingBatch = await tx.medicineBatch.findFirst({
-          where: { batchNumber: batchNo, medicineId: item.medicineId }
-        });
-
-        if (existingBatch) {
-          await tx.medicineBatch.update({
-            where: { id: existingBatch.id },
-            data: { stockQty: { increment: acceptedQty } }
+      if (isFinal) {
+        if (shipmentId) {
+          await tx.shipment.update({
+            where: { id: shipmentId },
+            data: { status: 'Delivered', deliveryDate: new Date() }
           });
-        } else {
-          await tx.medicineBatch.create({
+        }
+
+        for (const gi of grnItemsToCreate) {
+          const acceptedQty = gi.acceptedQty;
+          const poItem = po.items.find(pi => pi.medicineId === gi.medicineId);
+
+          const newReceivedQty = poItem.receivedQty + gi.receivedQty;
+          const newDamagedQty = poItem.damagedQty + gi.damagedQty;
+          const newCancelledQty = poItem.cancelledQty + gi.cancelledQty;
+
+          let poItemStatus = 'Pending';
+          if (newReceivedQty + newCancelledQty >= poItem.qty) {
+            poItemStatus = 'Received';
+          } else if (newReceivedQty > 0) {
+            poItemStatus = 'Partially Received';
+          }
+
+          await tx.purchaseOrderItem.update({
+            where: { id: poItem.id },
             data: {
-              medicineId: item.medicineId,
-              batchNumber: batchNo,
-              expiryDate: new Date(item.expiryDate),
-              stockQty: acceptedQty,
-              status: 'Active'
+              receivedQty: newReceivedQty,
+              damagedQty: newDamagedQty,
+              cancelledQty: newCancelledQty,
+              status: poItemStatus
             }
           });
-        }
 
-        // 5b. Increment Medicine stockQuantity
-        await tx.medicine.update({
-          where: { id: item.medicineId },
-          data: { stockQuantity: { increment: acceptedQty } }
-        });
+          if (acceptedQty <= 0) continue;
 
-        // 5c. Place in Rack/Warehouse (Fallback allocation)
-        const activeCompartments = await tx.compartment.findMany({
-          where: { isDeleted: false, status: 'Active' },
-          include: { rack: true, medicineLocations: true }
-        });
-
-        const medicine = await tx.medicine.findUnique({
-          where: { id: item.medicineId },
-          include: { category: true }
-        });
-        const categoryName = medicine?.category?.name || 'General';
-
-        let allocatedComp = activeCompartments.find(c => {
-          const compCat = (c.category || '').toLowerCase();
-          const matchesCategory = compCat.includes(categoryName.toLowerCase());
-          const currentUsage = c.medicineLocations.reduce((sum, loc) => sum + loc.qty, 0);
-          return matchesCategory && (c.maxCapacity - currentUsage) > 0;
-        });
-
-        if (!allocatedComp) {
-          allocatedComp = activeCompartments.find(c => {
-            const currentUsage = c.medicineLocations.reduce((sum, loc) => sum + loc.qty, 0);
-            return (c.maxCapacity - currentUsage) > 0;
+          const batchNo = gi.batchNumber.trim();
+          const existingBatch = await tx.medicineBatch.findFirst({
+            where: { batchNumber: batchNo, medicineId: gi.medicineId }
           });
-        }
 
-        let rackQty = 0;
-        let warehouseQty = acceptedQty;
-
-        if (allocatedComp) {
-          const currentUsage = allocatedComp.medicineLocations.reduce((sum, loc) => sum + loc.qty, 0);
-          const space = allocatedComp.maxCapacity - currentUsage;
-          if (acceptedQty <= space) {
-            rackQty = acceptedQty;
-            warehouseQty = 0;
+          if (existingBatch) {
+            await tx.medicineBatch.update({
+              where: { id: existingBatch.id },
+              data: { stockQty: { increment: acceptedQty } }
+            });
           } else {
-            rackQty = space;
-            warehouseQty = acceptedQty - space;
-          }
-
-          await tx.medicineLocation.create({
-            data: {
-              compartmentId: allocatedComp.id,
-              medicineId: item.medicineId,
-              batchNumber: batchNo,
-              qty: rackQty
-            }
-          });
-        }
-
-        if (warehouseQty > 0) {
-          let warehouse = await tx.warehouse.findFirst({
-            where: { status: 'Active', isDeleted: false }
-          });
-          if (!warehouse) {
-            warehouse = await tx.warehouse.create({
-              data: { name: 'Central Warehouse A', code: 'CWH-A', status: 'Active', type: 'Central' }
+            await tx.medicineBatch.create({
+              data: {
+                medicineId: gi.medicineId,
+                batchNumber: batchNo,
+                expiryDate: gi.expiryDate,
+                stockQty: acceptedQty,
+                status: 'Active'
+              }
             });
           }
-          await tx.warehouseStock.upsert({
-            where: { warehouseId_medicineId: { warehouseId: warehouse.id, medicineId: item.medicineId } },
-            update: { qty: { increment: warehouseQty } },
-            create: { warehouseId: warehouse.id, medicineId: item.medicineId, qty: warehouseQty }
+
+          await tx.medicine.update({
+            where: { id: gi.medicineId },
+            data: { stockQuantity: { increment: acceptedQty } }
+          });
+
+          const activeCompartments = await tx.compartment.findMany({
+            where: { isDeleted: false, status: 'Active' },
+            include: { rack: true, medicineLocations: true }
+          });
+
+          const medicine = await tx.medicine.findUnique({
+            where: { id: gi.medicineId },
+            include: { category: true }
+          });
+          const categoryName = medicine?.category?.name || 'General';
+
+          let allocatedComp = activeCompartments.find(c => {
+            const compCat = (c.category || '').toLowerCase();
+            const matchesCategory = compCat.includes(categoryName.toLowerCase());
+            const currentUsage = c.medicineLocations.reduce((sum, loc) => sum + loc.qty, 0);
+            return matchesCategory && (c.maxCapacity - currentUsage) > 0;
+          });
+
+          if (!allocatedComp) {
+            allocatedComp = activeCompartments.find(c => {
+              const currentUsage = c.medicineLocations.reduce((sum, loc) => sum + loc.qty, 0);
+              return (c.maxCapacity - currentUsage) > 0;
+            });
+          }
+
+          let rackQty = 0;
+          let warehouseQty = acceptedQty;
+
+          if (allocatedComp) {
+            const currentUsage = allocatedComp.medicineLocations.reduce((sum, loc) => sum + loc.qty, 0);
+            const space = allocatedComp.maxCapacity - currentUsage;
+            if (acceptedQty <= space) {
+              rackQty = acceptedQty;
+              warehouseQty = 0;
+            } else {
+              rackQty = space;
+              warehouseQty = acceptedQty - space;
+            }
+
+            await tx.medicineLocation.create({
+              data: {
+                compartmentId: allocatedComp.id,
+                medicineId: gi.medicineId,
+                batchNumber: batchNo,
+                qty: rackQty
+              }
+            });
+          }
+
+          if (warehouseQty > 0) {
+            let warehouse = await tx.warehouse.findFirst({
+              where: { status: 'Active', isDeleted: false }
+            });
+            if (!warehouse) {
+              warehouse = await tx.warehouse.create({
+                data: { name: 'Central Warehouse A', code: 'CWH-A', status: 'Active', type: 'Central' }
+              });
+            }
+            await tx.warehouseStock.upsert({
+              where: { warehouseId_medicineId: { warehouseId: warehouse.id, medicineId: gi.medicineId } },
+              update: { qty: { increment: warehouseQty } },
+              create: { warehouseId: warehouse.id, medicineId: gi.medicineId, qty: warehouseQty }
+            });
+          }
+
+          await tx.inventoryLog.create({
+            data: {
+              medicineId: gi.medicineId,
+              medicineName: gi.medicineName,
+              type: 'Stock In',
+              qty: acceptedQty,
+              user: receivedBy || 'Inventory Staff',
+              remarks: `GRN ${createdGRN.id} — Rack: ${rackQty}, Warehouse: ${warehouseQty}`
+            }
+          });
+
+          await tx.stockLedger.create({
+            data: {
+              medicineId: gi.medicineId,
+              batchNumber: batchNo,
+              transactionType: 'GRN_RECEIVE',
+              quantity: acceptedQty,
+              referenceId: createdGRN.id
+            }
           });
         }
 
-        // 5d. Create Inventory Log
-        await tx.inventoryLog.create({
-          data: {
-            medicineId: item.medicineId,
-            medicineName: item.medicineName,
-            type: 'Stock In',
-            qty: acceptedQty,
-            user: receivedBy || 'Inventory Staff',
-            remarks: `GRN ${grnId} — Rack: ${rackQty}, Warehouse: ${warehouseQty}`
-          }
+        const updatedPOItems = await tx.purchaseOrderItem.findMany({
+          where: { purchaseOrderId: poId }
+        });
+        const allDone = updatedPOItems.every(pi => pi.receivedQty + pi.cancelledQty >= pi.qty);
+        const anyDone = updatedPOItems.some(pi => pi.receivedQty > 0);
+
+        let newPOStatus = 'PO_CONFIRMED';
+        if (allDone) {
+          newPOStatus = 'Completed';
+        } else if (anyDone) {
+          newPOStatus = 'Partially Received';
+        }
+
+        await tx.purchaseOrder.update({
+          where: { id: poId },
+          data: { status: newPOStatus }
         });
       }
 
-      // Check overall PO status: did we receive everything?
-      const updatedPOItems = await tx.purchaseOrderItem.findMany({
-        where: { purchaseOrderId: poId }
-      });
-      const allDone = updatedPOItems.every(pi => pi.receivedQty + pi.damagedQty + pi.cancelledQty >= pi.qty);
-      const anyDone = updatedPOItems.some(pi => pi.receivedQty + pi.damagedQty > 0);
-
-      let newPOStatus = 'PO_CONFIRMED';
-      if (allDone) {
-        newPOStatus = 'COMPLETED';
-      } else if (anyDone) {
-        newPOStatus = 'PARTIALLY_RECEIVED';
+      // Verify user exists before setting FK to avoid constraint violation
+      let auditUserId = null;
+      if (user?.userId) {
+        const existingUser = await tx.user.findUnique({ where: { id: user.userId }, select: { id: true } });
+        if (existingUser) auditUserId = existingUser.id;
       }
 
-      // 6. Update Purchase Order Status
-      await tx.purchaseOrder.update({
-        where: { id: poId },
-        data: { status: newPOStatus }
-      });
-
-      // 7. Audit Log
       await tx.auditLog.create({
         data: {
-          userId: user?.userId || null,
+          userId: auditUserId,
           userName: user?.email || receivedBy || 'Inventory Staff',
-          action: 'GRN Logged',
-          details: `GRN ${grnId} generated for PO ${poId}`
+          action: savedAsDraft ? 'GRN Draft Saved' : 'GRN Logged',
+          details: `GRN ${createdGRN.id} ${savedAsDraft ? 'draft saved' : 'generated'} for PO ${poId}`
         }
       });
 
-      return createdGRN;
+      return {
+        ...createdGRN,
+        items: await tx.gRNItem.findMany({ where: { grnId: createdGRN.id } })
+      };
     });
   },
 
@@ -821,11 +964,10 @@ export const purchaseService = {
 
   getCompletedPOs: async () => {
     return prisma.purchaseOrder.findMany({
-      where: { status: 'COMPLETED' },
+      where: { status: { in: ['COMPLETED', 'Completed'] } },
       include: {
         items: { include: { medicine: true } },
         supplier: true,
-        shipments: { include: { items: true } },
         grns: { include: { items: true } }
       },
       orderBy: { updatedAt: 'desc' }
@@ -834,12 +976,65 @@ export const purchaseService = {
 
   getCompletedGRNs: async () => {
     return prisma.gRN.findMany({
+      where: {
+        status: { in: ['COMPLETED', 'Completed', 'Approved', 'Finalized'] }
+      },
       include: {
         items: { include: { medicine: true } },
         purchaseOrder: { include: { supplier: true } }
       },
       orderBy: { createdAt: 'desc' }
     });
+  },
+
+  validateInvoiceNumber: async (supplierId, invoiceNumber, excludeGrnId) => {
+    if (!supplierId || !invoiceNumber) return false;
+    
+    // Find if any completed or draft GRN for this supplier has the same invoice number
+    const whereClause = {
+      purchaseOrder: {
+        supplierId: supplierId
+      },
+      invoiceNumber: invoiceNumber
+    };
+    
+    if (excludeGrnId) {
+      whereClause.id = { not: excludeGrnId };
+    }
+    
+    const existing = await prisma.gRN.findFirst({
+      where: whereClause
+    });
+    
+    return !!existing;
+  },
+
+  updateGRN: async (id, data, user) => {
+    const grn = await prisma.gRN.findUnique({ where: { id } });
+    if (!grn) throw new AppError('GRN not found', 404);
+    
+    // Process update logic similar to createGRN but replacing the existing one
+    // Since this is updating an existing GRN, we just update fields for now
+    // Actually, in an ERP, modifying a saved GRN draft is allowed.
+    // If it's finalized, it might be restricted.
+    
+    // To implement GRN Draft Editability properly, we update it
+    const updateData = {
+      invoiceNumber: data.invoiceNumber || grn.invoiceNumber,
+      savedAsDraft: data.savedAsDraft !== undefined ? data.savedAsDraft : grn.savedAsDraft,
+      status: data.savedAsDraft ? 'Draft' : 'COMPLETED'
+    };
+    
+    const updatedGrn = await prisma.gRN.update({
+      where: { id },
+      data: updateData,
+      include: {
+        items: true,
+        purchaseOrder: { include: { supplier: true } }
+      }
+    });
+    
+    return updatedGrn;
   },
 
   getLowStockMedicines: async () => {
@@ -880,8 +1075,13 @@ export const purchaseService = {
       if (latestPO) {
         lastOrderedDate = latestPO.createdAt;
         if (latestPO.status === 'COMPLETED' || latestPO.status === 'Completed') {
-          status = 'Completed';
-          poId = latestPO.id;
+          if (med.stockQuantity <= med.reorderLevel) {
+            status = 'Pending Approval';
+            poId = null;
+          } else {
+            status = 'Completed';
+            poId = latestPO.id;
+          }
         } else if (latestPO.status !== 'CANCELLED' && latestPO.status !== 'Cancelled') {
           status = 'PO Generated';
           poId = latestPO.id;
@@ -933,7 +1133,7 @@ export const purchaseService = {
 
     const existingPO = await prisma.purchaseOrder.findFirst({
       where: {
-        status: { in: ['PO_GENERATED', 'PO_CONFIRMED', 'PARTIALLY_RECEIVED'] },
+        status: { in: ['PO_GENERATED', 'PO_CONFIRMED', 'PARTIALLY_RECEIVED', 'Pending', 'Confirmed', 'Partially Received'] },
         items: {
           some: {
             medicineId
@@ -946,29 +1146,24 @@ export const purchaseService = {
       throw new AppError(`A Purchase Order (${existingPO.id}) already exists for this medicine.`, 400);
     }
 
-    const allPOs = await prisma.purchaseOrder.findMany({
-      select: { id: true }
-    });
-    let maxNum = 0;
-    for (const po of allPOs) {
-      const match = po.id.match(/^PO-(\d+)$/);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        if (num > maxNum) maxNum = num;
-      }
-    }
-    const nextNum = maxNum + 1;
-    const poId = `PO-${String(nextNum).padStart(3, '0')}`;
+    const poId = await generatePOId(null);
 
     const orderQty = parseInt(qty) || Math.max(med.reorderLevel * 2, 50);
     const price = Number(med.pricePerPiece) || 15.00;
     const taxPercentage = Number(med.taxPercentage) || 0;
     const itemTotal = orderQty * price * (1 + (taxPercentage / 100));
+    const subtotalVal = orderQty * price;
+
+    const now = new Date();
+    const poTimeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 
     return prisma.purchaseOrder.create({
       data: {
         id: poId,
         supplierId,
+        poDate: now,
+        poTime: poTimeStr,
+        subtotal: subtotalVal,
         total: itemTotal,
         status: 'PO_GENERATED',
         createdBy: user?.email || 'System Dashboard',
@@ -977,6 +1172,7 @@ export const purchaseService = {
             medicineId,
             medicineName: med.medicineName,
             qty: orderQty,
+            defaultPrice: price,
             unitPrice: price,
             tax: taxPercentage,
             total: itemTotal,
@@ -1261,6 +1457,21 @@ export const purchaseController = {
     try {
       const d = await purchaseService.getGRNByPOId(req.params.poId);
       res.json({ success: true, data: d });
+    } catch (e) { next(e); }
+  },
+
+  validateInvoiceNumber: async (req, res, next) => {
+    try {
+      const { supplierId, invoiceNumber, excludeGrnId } = req.query;
+      const d = await purchaseService.validateInvoiceNumber(supplierId, invoiceNumber, excludeGrnId);
+      res.json({ success: true, exists: d });
+    } catch (e) { next(e); }
+  },
+
+  updateGRN: async (req, res, next) => {
+    try {
+      const d = await purchaseService.updateGRN(req.params.id, req.body, req.user);
+      res.json({ success: true, data: d, message: 'GRN updated successfully.' });
     } catch (e) { next(e); }
   },
 

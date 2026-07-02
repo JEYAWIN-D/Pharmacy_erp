@@ -1,0 +1,56 @@
+ERROR: 
+Invalid `prisma.purchaseOrder.findMany()` invocation:
+
+{
+  include: {
+    items: {
+      include: {
+        medicine: true
+      }
+    },
+    supplier: true,
+    shipments: true,
+    ~~~~~~~~~
+    grns: {
+      include: {
+        items: true
+      }
+    }
+  },
+  orderBy: {
+    createdAt: "desc"
+  }
+}
+
+Unknown field `shipments` for include statement on model `PurchaseOrder`. Available options are marked with ?.
+Stack: PrismaClientValidationError: 
+Invalid `prisma.purchaseOrder.findMany()` invocation:
+
+{
+  include: {
+    items: {
+      include: {
+        medicine: true
+      }
+    },
+    supplier: true,
+    shipments: true,
+    ~~~~~~~~~
+    grns: {
+      include: {
+        items: true
+      }
+    }
+  },
+  orderBy: {
+    createdAt: "desc"
+  }
+}
+
+Unknown field `shipments` for include statement on model `PurchaseOrder`. Available options are marked with ?.
+    at Nn (D:\MY PROJECTS\Pharmacy_erp\Pharmacy_Backend\node_modules\@prisma\client\runtime\library.js:29:1363)
+    at ei.handleRequestError (D:\MY PROJECTS\Pharmacy_erp\Pharmacy_Backend\node_modules\@prisma\client\runtime\library.js:121:6911)
+    at ei.handleAndLogRequestError (D:\MY PROJECTS\Pharmacy_erp\Pharmacy_Backend\node_modules\@prisma\client\runtime\library.js:121:6593)
+    at ei.request (D:\MY PROJECTS\Pharmacy_erp\Pharmacy_Backend\node_modules\@prisma\client\runtime\library.js:121:6300)
+    at async a (D:\MY PROJECTS\Pharmacy_erp\Pharmacy_Backend\node_modules\@prisma\client\runtime\library.js:130:9551)
+    at async file:///D:/MY%20PROJECTS/Pharmacy_erp/Pharmacy_Backend/src/app.js:59:15

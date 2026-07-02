@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { Database, Search, Plus, Pencil, Trash2, Tag, Building2, X } from 'lucide-react';
+import { Database, Search, Plus, Pencil, Trash2, Tag, Building2, X, AlertTriangle } from 'lucide-react';
 import { useMedicineController } from './useMedicineController';
 import { useMedicineCategoryController } from './useMedicineCategoryController';
 import { useManufacturerController } from './useManufacturerController';
 
-export default function MedicineView({ role, setSchemaModalTable }) {
+export default function MedicineView({ role, setSchemaModalTable, setAppTab }) {
   const [activeTab, setActiveTab] = useState('medicines');
 
   const {
@@ -115,6 +115,12 @@ export default function MedicineView({ role, setSchemaModalTable }) {
                         </td>
                         <td className="py-3 text-center">
                           <div className="flex items-center justify-center gap-1.5">
+                            {med.stock <= med.minStock && (
+                              <button onClick={() => setAppTab && setAppTab('purchase-management')}
+                                className="p-1.5 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-lg transition cursor-pointer" title="Low Stock! View in Allocation Page">
+                                <AlertTriangle size={12} />
+                              </button>
+                            )}
                             <button onClick={() => handleEditMedicine(med)}
                               className="p-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition cursor-pointer" title="Edit">
                               <Pencil size={12} />

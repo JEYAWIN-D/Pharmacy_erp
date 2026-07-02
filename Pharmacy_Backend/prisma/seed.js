@@ -103,6 +103,109 @@ async function main() {
   }
   console.log(`  ✓ ${racks.length} Racks seeded`);
 
+  // ─── Suppliers ─────────────────────────────────────────────────────────────
+  const suppliers = [
+    { name: 'Acme Pharma', code: 'SUP-ACME', gstNumber: '29AAACA1234A1Z1', email: 'acme@pharma.com', phone: '+91 99999 88888', gstType: 'Regular' },
+    { name: 'Medlife Distributors', code: 'SUP-MEDLIFE', gstNumber: '29AAACA5678B1Z2', email: 'medlife@dist.com', phone: '+91 88888 77777', gstType: 'Regular' },
+    { name: 'BioTech Labs', code: 'SUP-BIOTECH', gstNumber: '29AAACA9012C1Z3', email: 'biotech@labs.com', phone: '+91 77777 66666', gstType: 'Regular' }
+  ];
+  const createdSuppliers = {};
+  for (const sup of suppliers) {
+    const s = await prisma.supplier.upsert({
+      where: { code: sup.code },
+      update: {},
+      create: sup
+    });
+    createdSuppliers[sup.name] = s;
+  }
+  console.log(`  ✓ ${suppliers.length} Suppliers seeded`);
+
+  // Query existing categories/manufacturers to link
+  const analgesicCat = await prisma.category.findUnique({ where: { name: 'Analgesic' } });
+  const antacidCat = await prisma.category.findUnique({ where: { name: 'Antacid' } });
+  const antibioticCat = await prisma.category.findUnique({ where: { name: 'Antibiotic' } });
+
+  const gskMfr = await prisma.manufacturer.findFirst({ where: { name: 'GlaxoSmithKline' } });
+  const alkemMfr = await prisma.manufacturer.findFirst({ where: { name: 'Alkem Laboratories' } });
+
+  // ─── Medicines ─────────────────────────────────────────────────────────────
+  const medicinesToSeed = [
+    {
+      medicineName: 'Dolo 650',
+      genericName: 'Paracetamol',
+      brandName: 'Dolo',
+      skuCode: 'MED-DOLO',
+      pricePerPiece: 2.50,
+      taxPercentage: 12.00,
+      categoryId: analgesicCat?.id,
+      manufacturerId: gskMfr?.id,
+      supplierId: createdSuppliers['Acme Pharma']?.id,
+      stockQuantity: 1500,
+      reorderLevel: 200
+    },
+    {
+      medicineName: 'Digene',
+      genericName: 'Antacid Gel/Tab',
+      brandName: 'Digene',
+      skuCode: 'MED-DIGENE',
+      pricePerPiece: 1.80,
+      taxPercentage: 12.00,
+      categoryId: antacidCat?.id,
+      manufacturerId: alkemMfr?.id,
+      supplierId: createdSuppliers['Medlife Distributors']?.id,
+      stockQuantity: 800,
+      reorderLevel: 100
+    },
+    {
+      medicineName: 'Diclofenac',
+      genericName: 'Diclofenac Sodium',
+      brandName: 'Voveran',
+      skuCode: 'MED-DICLO',
+      pricePerPiece: 5.00,
+      taxPercentage: 18.00,
+      categoryId: analgesicCat?.id,
+      manufacturerId: gskMfr?.id,
+      supplierId: createdSuppliers['BioTech Labs']?.id,
+      stockQuantity: 1200,
+      reorderLevel: 150
+    },
+    {
+      medicineName: 'Amoxicillin 500mg',
+      genericName: 'Amoxicillin Trihydrate',
+      brandName: 'Mox',
+      skuCode: 'MED-AMOX',
+      pricePerPiece: 8.50,
+      taxPercentage: 12.00,
+      categoryId: antibioticCat?.id,
+      manufacturerId: alkemMfr?.id,
+      supplierId: createdSuppliers['Acme Pharma']?.id,
+      stockQuantity: 50,
+      reorderLevel: 100
+    },
+    {
+      medicineName: 'Paracetamol 500mg',
+      genericName: 'Paracetamol',
+      brandName: 'Crocin',
+      skuCode: 'MED-PARA',
+      pricePerPiece: 1.50,
+      taxPercentage: 12.00,
+      categoryId: analgesicCat?.id,
+      manufacturerId: gskMfr?.id,
+      supplierId: createdSuppliers['Medlife Distributors']?.id,
+      stockQuantity: 2000,
+      reorderLevel: 250
+    }
+  ];
+
+  for (const med of medicinesToSeed) {
+    await prisma.medicine.upsert({
+      where: { skuCode: med.skuCode },
+      update: {},
+      create: med
+    });
+  }
+  console.log(`  ✓ ${medicinesToSeed.length} Medicines seeded`);
+
   console.log('\n✅ Seeding complete!');
   console.log('   Login with: admin@hcare.com / Admin@2024');
 }

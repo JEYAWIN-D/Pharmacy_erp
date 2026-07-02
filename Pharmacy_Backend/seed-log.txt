@@ -1,0 +1,17 @@
+SUCCESS:
+🌱 Seeding database...
+  ✓ Role: Admin
+  ✓ Role: Pharmacy Manager
+  ✓ Role: Pharmacist
+  ✓ Role: Inventory Staff
+  ✓ Role: Purchase Manager
+  ✓ Role: Billing Staff
+  ✓ Role: Doctor
+  ✓ Admin user: admin@hcare.com / Admin@2024
+  ✓ 10 Categories seeded
+  ✓ 7 Manufacturers seeded
+  ✓ 4 Notifications seeded
+  ✓ 7 Racks seeded
+
+✅ Seeding complete!
+   Login with: admin@hcare.com / Admin@2024
