@@ -24,10 +24,6 @@ if (process.env.NODE_ENV === 'development') {
 
 app.use(express.json());
 
-app.get('/api/health', (req, res) => {
-  res.json({ success: true, message: 'Backend is connected and running!' });
-});
-
 app.use('/api', routes);
 
 app.use((err, req, res, next) => {
