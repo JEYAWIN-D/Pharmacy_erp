@@ -148,7 +148,7 @@ export default function PharmacyERP() {
       case 'dashboard':
         return <DashboardView role={role} setActiveTab={setActiveTab} />;
       case 'medicine-master':
-        return <MedicineView role={role} setSchemaModalTable={setSchemaModalTable} />;
+        return <MedicineView role={role} setSchemaModalTable={setSchemaModalTable} setAppTab={setActiveTab} />;
       case 'supplier-management':
         return <SupplierView setSchemaModalTable={setSchemaModalTable} />;
       case 'purchase-management':

@@ -5,7 +5,7 @@ import {
   Database, FileText, Plus, PackageCheck, ClipboardList,
   CheckCircle, AlertTriangle, TrendingUp, Truck, Layers,
   Search, X, Calendar, User, Building, ShieldAlert,
-  ArrowRight, Check, Play, Edit3, Trash, Info, RefreshCw
+  ArrowRight, Check, Play, Edit3, Trash, Info, RefreshCw, Edit, ChevronRight
 } from 'lucide-react';
 import { usePurchaseController } from './usePurchaseController';
 import { usePurchaseRequestController } from './usePurchaseRequestController';
@@ -30,10 +30,11 @@ const getPOStatusDisplay = (status) => {
   return status;
 };
 
-// Searchable Dropdown / Combobox Component
+// Searchable Dropdown / Combobox Component (Keyboard Navigable)
 function SearchableDropdown({ options, value, onChange, placeholder, inputClass, className }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const dropdownRef = React.useRef(null);
 
   useEffect(() => {
@@ -61,10 +62,41 @@ function SearchableDropdown({ options, value, onChange, placeholder, inputClass,
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, [value, options]);
 
-  const filteredOptions = options.filter(opt => {
-    const name = String(opt.name || opt.id || '').toLowerCase();
-    return name.includes(searchTerm.toLowerCase());
-  });
+  const filteredOptions = useMemo(() => {
+    if (!searchTerm.trim()) return [];
+    return options.filter(opt => {
+      const name = String(opt.name || opt.id || '').toLowerCase();
+      return name.includes(searchTerm.toLowerCase());
+    });
+  }, [searchTerm, options]);
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'ArrowDown') {
+      if (!isOpen) {
+        setIsOpen(true);
+        setHighlightedIndex(0);
+      } else if (filteredOptions.length > 0) {
+        setHighlightedIndex(prev => (prev + 1) % filteredOptions.length);
+      }
+      e.preventDefault();
+    } else if (e.key === 'ArrowUp') {
+      if (isOpen && filteredOptions.length > 0) {
+        setHighlightedIndex(prev => (prev - 1 + filteredOptions.length) % filteredOptions.length);
+        e.preventDefault();
+      }
+    } else if (e.key === 'Enter') {
+      if (isOpen && highlightedIndex >= 0 && highlightedIndex < filteredOptions.length) {
+        const selected = filteredOptions[highlightedIndex];
+        onChange(selected.id);
+        setSearchTerm(selected.name || selected.id);
+        setIsOpen(false);
+        e.preventDefault();
+      }
+    } else if (e.key === 'Escape') {
+      setIsOpen(false);
+      e.preventDefault();
+    }
+  };
 
   return (
     <div ref={dropdownRef} className={`relative ${className || ''}`}>
@@ -74,18 +106,20 @@ function SearchableDropdown({ options, value, onChange, placeholder, inputClass,
         onChange={(e) => {
           setSearchTerm(e.target.value);
           setIsOpen(e.target.value.trim() !== '');
+          setHighlightedIndex(-1);
           if (e.target.value === '') {
             onChange('');
           }
         }}
+        onKeyDown={handleKeyDown}
         autoComplete="off"
         placeholder={placeholder}
-        className={inputClass || "w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 focus:outline-none"}
+        className={inputClass || "w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-705 focus:ring-2 focus:ring-blue-500 focus:outline-none"}
       />
       {isOpen && searchTerm.trim() !== '' && (
         <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-48 overflow-y-auto">
           {filteredOptions.length > 0 ? (
-            filteredOptions.map((opt) => (
+            filteredOptions.map((opt, idx) => (
               <div
                 key={opt.id || opt.name}
                 onClick={() => {
@@ -93,7 +127,9 @@ function SearchableDropdown({ options, value, onChange, placeholder, inputClass,
                   setSearchTerm(opt.name || opt.id);
                   setIsOpen(false);
                 }}
-                className="p-2.5 text-xs font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-700 cursor-pointer transition-colors border-b border-slate-50 last:border-b-0"
+                className={`p-2.5 text-xs font-bold cursor-pointer transition-colors border-b border-slate-50 last:border-b-0 ${
+                  highlightedIndex === idx ? 'bg-blue-100 text-blue-800' : 'text-slate-750 hover:bg-blue-50 hover:text-blue-700'
+                }`}
               >
                 {opt.name || opt.id} {opt.stock !== undefined ? `(Stock: ${opt.stock})` : ''}
               </div>
@@ -318,7 +354,10 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
     grnItems, setGrnItems,
     receivedBy, setReceivedBy,
     invoiceNumber, setInvoiceNumber,
+    invoiceError, setInvoiceError,
     loadPOItems,
+    loadDraftGRN,
+    editingDraftId, setEditingDraftId,
     updateGrnItem,
     handleSubmitGRN
   } = useGRNController();
@@ -334,12 +373,64 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
   const [selectedShipmentIdState, setSelectedShipmentIdState] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const [directMedicineId, setDirectMedicineId] = useState('');
+  const [directQty, setDirectQty] = useState('50');
+  const [directPrice, setDirectPrice] = useState('15.00');
+  const [directTax, setDirectTax] = useState('12');
+  const [poListTab, setPoListTab] = useState('Pending');
+  const [grnListTab, setGrnListTab] = useState('Completed');
+
+  const handleSelectDirectMedicine = (medId) => {
+    setDirectMedicineId(medId);
+    const med = medicines.find(m => m.id === medId);
+    if (med) {
+      if (med.pricePerPiece !== undefined) {
+        setDirectPrice(Number(med.pricePerPiece).toFixed(2));
+      } else {
+        setDirectPrice('15.00');
+      }
+      if (med.taxPercentage !== undefined) {
+        setDirectTax(String(med.taxPercentage));
+      } else {
+        setDirectTax('12');
+      }
+      if (med.supplier) {
+        setPoSupplier(med.supplier.name);
+      }
+    }
+  };
 
   // Toast hook & Low-Stock dashboard states
   const { toasts, toast, confirm, dismiss, resolveConfirm } = useToast();
-  const [dashboardFilter, setDashboardFilter] = useState('Pending'); // 'Pending', 'PO Generated', 'Completed'
-  const [lowStockItems, setLowStockItems] = useState([]);
   const [loadingLowStock, setLoadingLowStock] = useState(false);
+  const [lowStockItems, setLowStockItems] = useState([]);
+  
+  // Comprehensive Advanced Filters State
+  const [filters, setFilters] = useState({
+    dashboard: { dateFrom: '', dateTo: '', supplier: '', medicine: '', unit: '', status: 'Pending' },
+    po: { dateFrom: '', dateTo: '', supplier: '', medicine: '', priceMin: '', priceMax: '', unit: '', status: '', poId: '' },
+    grn: { dateFrom: '', dateTo: '', supplier: '', medicine: '', invoice: '', poId: '', status: '', unit: '' },
+    history: { dateFrom: '', dateTo: '', supplier: '', medicine: '', priceMin: '', priceMax: '', unit: '', poId: '', grnId: '', invoice: '', status: '' }
+  });
+  
+  const updateFilter = (tab, field, value) => {
+    setFilters(prev => ({
+      ...prev,
+      [tab]: {
+        ...prev[tab],
+        [field]: value
+      }
+    }));
+  };
+
+  const clearFilters = (tab) => {
+    setFilters(prev => ({
+      ...prev,
+      [tab]: {
+        dateFrom: '', dateTo: '', supplier: '', medicine: '', unit: '', status: tab === 'dashboard' ? 'Pending' : '', 
+        priceMin: '', priceMax: '', poId: '', grnId: '', invoice: ''
+      }
+    }));
+  };
 
   const fetchLowStock = useCallback(async () => {
     setLoadingLowStock(true);
@@ -359,6 +450,31 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
   useEffect(() => {
     fetchLowStock();
   }, [fetchLowStock, purchaseOrders]);
+
+  // Invoice Debounce Validation
+  useEffect(() => {
+    if (!invoiceNumber || !selectedPOId) {
+      setInvoiceError('');
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const po = pendingGRNOrders.find(p => p.id === selectedPOId);
+      const supplierId = po?.supplierId || po?.supplier?.id || (editingDraftId ? pendingGRNOrders.find(p => p.id === selectedPOId)?.supplierId : null);
+      if (!supplierId) return;
+      
+      try {
+        const res = await purchaseAPI.validateInvoiceNumber(supplierId, invoiceNumber, editingDraftId || '');
+        if (res && res.exists) {
+          setInvoiceError('This invoice number already exists for this supplier.');
+        } else {
+          setInvoiceError('');
+        }
+      } catch(err) {
+        // Validation failed, ignore for now
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [invoiceNumber, selectedPOId, pendingGRNOrders, setInvoiceError]);
 
   // Keyboard-first navigation handler
   useEffect(() => {
@@ -491,6 +607,14 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
       setIsSaving(true);
       const poToConfirm = purchaseOrders.find(p => p.id === poId);
       if (poToConfirm) {
+        // Validate items
+        const invalidItem = poToConfirm.items.find(it => it.qty === '' || parseInt(it.qty) <= 0 || isNaN(parseInt(it.qty)));
+        if (invalidItem) {
+          toast.error(`Quantity for ${invalidItem.medicineName} cannot be empty or zero.`);
+          setIsSaving(false);
+          return;
+        }
+
         // Save items quantity updates to the backend first
         await purchaseAPI.updatePO(poId, {
           items: poToConfirm.items.map(it => ({
@@ -540,16 +664,41 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
   };
 
   const handleEditPOItemQty = (poId, medicineId, newQty) => {
-    const qtyVal = parseInt(newQty);
-    if (isNaN(qtyVal) || qtyVal <= 0) return;
+    let qtyVal = newQty;
+    if (newQty !== '') {
+      qtyVal = parseInt(newQty);
+      if (isNaN(qtyVal) || qtyVal < 0) return;
+    }
     setPurchaseOrders(prev => prev.map(po => {
       if (po.id === poId) {
         const updatedItems = po.items.map(it => {
           if (it.medicineId === medicineId) {
             const unitPriceVal = Number(it.unitPrice || 0);
             const taxRateVal = Number(it.tax || 0);
-            const total = qtyVal * unitPriceVal * (1 + (taxRateVal / 100));
+            const effectiveQty = qtyVal === '' ? 0 : qtyVal;
+            const total = effectiveQty * unitPriceVal * (1 + (taxRateVal / 100));
             return { ...it, qty: qtyVal, total };
+          }
+          return it;
+        });
+        const newTotal = updatedItems.reduce((sum, it) => sum + Number(it.total || 0), 0);
+        return { ...po, items: updatedItems, total: newTotal };
+      }
+      return po;
+    }));
+  };
+
+  const handleEditPOItemPrice = (poId, medicineId, newPrice) => {
+    const priceVal = parseFloat(newPrice);
+    if (isNaN(priceVal) || priceVal < 0) return;
+    setPurchaseOrders(prev => prev.map(po => {
+      if (po.id === poId) {
+        const updatedItems = po.items.map(it => {
+          if (it.medicineId === medicineId) {
+            const qtyVal = parseInt(it.qty || 0);
+            const taxRateVal = Number(it.tax || 0);
+            const total = qtyVal * priceVal * (1 + (taxRateVal / 100));
+            return { ...it, unitPrice: priceVal, total };
           }
           return it;
         });
@@ -565,15 +714,18 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
     if (!po) return;
     const item = po.items.find(it => it.medicineId === medicineId);
     if (!item) return;
-    handleEditPOItemQty(poId, medicineId, item.qty + 1);
+    const currentQty = item.qty === '' ? 0 : parseInt(item.qty) || 0;
+    handleEditPOItemQty(poId, medicineId, currentQty + 1);
   };
 
   const handleDecreaseQty = (poId, medicineId) => {
     const po = purchaseOrders.find(p => p.id === poId);
     if (!po) return;
     const item = po.items.find(it => it.medicineId === medicineId);
-    if (!item || item.qty <= 1) return;
-    handleEditPOItemQty(poId, medicineId, item.qty - 1);
+    if (!item) return;
+    const currentQty = item.qty === '' ? 0 : parseInt(item.qty) || 0;
+    if (currentQty <= 1) return;
+    handleEditPOItemQty(poId, medicineId, currentQty - 1);
   };
 
   const handleRemovePOItem = (poId, medicineId) => {
@@ -646,10 +798,18 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
 
   const handleGRNSubmitLocal = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
-    const success = await handleSubmitGRN(toast, confirm);
+    const success = await handleSubmitGRN(false, toast, confirm);
     if (success) {
       if (fetchLowStock) fetchLowStock();
-      resetNavigation('completed');
+      resetNavigation('grn', 'list');
+    }
+  };
+
+  const handleGRNDraftSubmitLocal = async () => {
+    const success = await handleSubmitGRN(true, toast, confirm);
+    if (success) {
+      if (fetchLowStock) fetchLowStock();
+      resetNavigation('grn', 'list');
     }
   };
 
@@ -660,6 +820,7 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
     setSearchQuery('');
     setStatusFilter('All');
     setCurrentPage(1);
+    setEditingDraftId(null);
   };
 
   // Safe selection lookups with fallback checks to prevent white screen crashes
@@ -701,7 +862,8 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
   const approvedRequestsCount = purchaseRequests.filter(r => r.status === 'Approved' || r.status === 'Partially Approved').length;
   const inProgressOrdersCount = purchaseOrders.filter(p => ['Sent', 'Accepted', 'Shipped', 'In Transit', 'Delivered'].includes(p.status)).length;
   const pendingShipmentsCount = shipments.filter(s => s.status !== 'Delivered').length;
-  const pendingGRNCount = pendingGRNOrders.length;
+  const pendingPOCount = purchaseOrders.filter(p => !['COMPLETED', 'Completed', 'Closed', 'CANCELLED', 'Cancelled', 'Rejected'].includes(p.status)).length;
+  const totalPendingGRNCount = pendingGRNOrders.length + goodsReceipts.filter(g => g.status === 'Draft' || g.savedAsDraft).length;
   const partiallyReceivedCount = purchaseOrders.filter(p => p.status === 'Partially Received').length;
   const completedPOCount = completedPOs.length;
 
@@ -718,6 +880,117 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
         alertDate: new Date().toLocaleDateString('en-IN')
       }));
   }, [medicines]);
+
+  const filteredLowStockItems = useMemo(() => {
+    return lowStockItems.filter(item => {
+      const { dateFrom, dateTo, supplier, medicine, unit, status } = filters.dashboard;
+      
+      // Status Filter
+      const targetStatus = status === 'Pending' ? 'Pending Approval' : status === 'PO Generated' ? 'PO Generated' : status;
+      if (targetStatus && item.status !== targetStatus && targetStatus !== 'All') return false;
+      
+      // Date Filter (Last Ordered Date)
+      if (dateFrom && item.lastOrderedDate) {
+        if (new Date(item.lastOrderedDate) < new Date(dateFrom)) return false;
+      }
+      if (dateTo && item.lastOrderedDate) {
+        if (new Date(item.lastOrderedDate) > new Date(dateTo)) return false;
+      }
+      
+      // Supplier Filter
+      if (supplier && item.defaultSupplierName && !item.defaultSupplierName.toLowerCase().includes(supplier.toLowerCase())) return false;
+      
+      // Medicine Filter
+      if (medicine && !item.medicineName.toLowerCase().includes(medicine.toLowerCase())) return false;
+      
+      // Unit Filter (if applicable)
+      if (unit && item.unit && !item.unit.toLowerCase().includes(unit.toLowerCase())) return false;
+
+      return true;
+    });
+  }, [lowStockItems, filters.dashboard]);
+
+  const filteredPurchaseOrders = useMemo(() => {
+    return purchaseOrders.filter(po => {
+      const { dateFrom, dateTo, supplier, medicine, unit, priceMin, priceMax, status, poId } = filters.po;
+      
+      // Legacy Tab Status mapping combined with Advanced Status filter
+      let currentStatusTab = poListTab; 
+      if (status) currentStatusTab = status; // If advanced status is picked, it overrides tab
+
+      const poStatus = po.status;
+      if (currentStatusTab === 'Pending' && !['PO_GENERATED', 'Draft', 'Pending Approval', 'Pending'].includes(poStatus)) return false;
+      if (currentStatusTab === 'Partially Received' && !['PARTIALLY_RECEIVED', 'Partially Received', 'Shipped', 'In Transit', 'PO_CONFIRMED', 'Sent', 'Accepted'].includes(poStatus)) return false;
+      if (currentStatusTab === 'Completed' && !['COMPLETED', 'Completed', 'Closed'].includes(poStatus)) return false;
+      if (currentStatusTab === 'Cancelled' && !['CANCELLED', 'Cancelled', 'Rejected'].includes(poStatus)) return false;
+
+      // PO ID Filter
+      if (poId && !po.id.toLowerCase().includes(poId.toLowerCase())) return false;
+
+      // Supplier Filter
+      if (supplier && !getSupplierName(po.supplier).toLowerCase().includes(supplier.toLowerCase())) return false;
+
+      // Date Range Filter
+      if (dateFrom && new Date(po.createdAt) < new Date(dateFrom)) return false;
+      if (dateTo && new Date(po.createdAt) > new Date(dateTo)) return false;
+
+      // Price Range Filter
+      const poTotal = Number(po.total) || 0;
+      if (priceMin && poTotal < Number(priceMin)) return false;
+      if (priceMax && poTotal > Number(priceMax)) return false;
+
+      // Medicine Filter
+      if (medicine && !po.items?.some(it => (it.medicineName || '').toLowerCase().includes(medicine.toLowerCase()))) return false;
+
+      // Unit Filter
+      if (unit && !po.items?.some(it => (it.unit || '').toLowerCase().includes(unit.toLowerCase()))) return false;
+
+      return true;
+    });
+  }, [purchaseOrders, poListTab, filters.po]);
+
+  const filteredGoodsReceipts = useMemo(() => {
+    return goodsReceipts.filter(grn => {
+      const { dateFrom, dateTo, supplier, medicine, invoice, poId, status, unit } = filters.grn;
+      
+      const resolvedSupplier = grn.supplierName || grn.purchaseOrder?.supplier || grn.supplierId;
+      
+      // Legacy Tab Filter
+      if (grnListTab === 'Draft' && grn.savedAsDraft !== true && grn.status !== 'Draft') return false;
+      if (grnListTab === 'Completed' && (grn.savedAsDraft === true || grn.status === 'Draft')) return false;
+
+      // Status Filter
+      if (status && grn.status !== status) return false;
+
+      // Date Range Filter
+      if (dateFrom && new Date(grn.receivedDate) < new Date(dateFrom)) return false;
+      if (dateTo && new Date(grn.receivedDate) > new Date(dateTo)) return false;
+
+      // Supplier Filter
+      if (supplier && !getSupplierName(resolvedSupplier).toLowerCase().includes(supplier.toLowerCase())) return false;
+
+      // Invoice Filter
+      if (invoice && !(grn.invoiceNumber || '').toLowerCase().includes(invoice.toLowerCase())) return false;
+
+      // PO ID Filter
+      if (poId && !(grn.poId || '').toLowerCase().includes(poId.toLowerCase())) return false;
+
+      // Medicine & Unit Filter
+      if (medicine || unit) {
+        let hasMatch = false;
+        if (grn.items && grn.items.length > 0) {
+          hasMatch = grn.items.some(it => {
+            const medMatch = !medicine || (it.medicineName || '').toLowerCase().includes(medicine.toLowerCase());
+            const unitMatch = !unit || (it.unit || '').toLowerCase().includes(unit.toLowerCase());
+            return medMatch && unitMatch;
+          });
+        }
+        if (!hasMatch) return false;
+      }
+
+      return true;
+    });
+  }, [goodsReceipts, grnListTab, filters.grn]);
 
   // Color helper for statuses
   const getStatusBadgeClass = (status) => {
@@ -870,7 +1143,7 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
               )}
               <button onClick={() => resetNavigation('grn')} tabIndex={0}
                 className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'grn' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-                <PackageCheck size={13} /> GRN Receivables ({pendingGRNCount})
+                <PackageCheck size={13} /> GRN Receivables ({totalPendingGRNCount})
               </button>
               <button onClick={() => resetNavigation('completed')} tabIndex={0}
                 className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'completed' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
@@ -887,9 +1160,9 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {/* Low Stock Pending → Dashboard Pending filter */}
               <div
-                onClick={() => setDashboardFilter('Pending')}
+                onClick={() => updateFilter('dashboard', 'status', 'Pending')}
                 tabIndex={0}
-                onKeyDown={(e) => e.key === 'Enter' && setDashboardFilter('Pending')}
+                onKeyDown={(e) => e.key === 'Enter' && updateFilter('dashboard', 'status', 'Pending')}
                 className="bg-white border border-slate-200 p-4 rounded-2xl flex flex-col justify-between shadow-sm cursor-pointer hover:border-rose-300 hover:shadow-md transition-all group kb-focusable focus:ring-2 focus:ring-rose-400 focus:outline-none"
               >
                 <span className="text-slate-400 text-[10px] font-black uppercase">Low Stock Pending</span>
@@ -910,7 +1183,7 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
               >
                 <span className="text-slate-400 text-[10px] font-black uppercase">Purchase Orders</span>
                 <span className="text-2xl font-black text-blue-600 block pt-1">
-                  {purchaseOrders.length}
+                  {pendingPOCount}
                 </span>
                 <span className="text-[9px] font-bold text-slate-300 group-hover:text-blue-400 uppercase mt-2 flex items-center gap-1 transition-colors">
                   View Details <ArrowRight size={10} className="group-hover:translate-x-0.5 transition-transform" />
@@ -926,7 +1199,7 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
               >
                 <span className="text-slate-400 text-[10px] font-black uppercase">GRN Receivables</span>
                 <span className="text-2xl font-black text-amber-600 block pt-1">
-                  {pendingGRNCount}
+                  {totalPendingGRNCount}
                 </span>
                 <span className="text-[9px] font-bold text-slate-300 group-hover:text-amber-400 uppercase mt-2 flex items-center gap-1 transition-colors">
                   View Details <ArrowRight size={10} className="group-hover:translate-x-0.5 transition-transform" />
@@ -957,11 +1230,11 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                 {['Pending', 'PO Generated', 'Completed'].map(filterTab => {
                   const targetStatus = filterTab === 'Pending' ? 'Pending Approval' : filterTab === 'PO Generated' ? 'PO Generated' : 'Completed';
                   const count = lowStockItems.filter(item => item.status === targetStatus).length;
-                  const isActive = dashboardFilter === filterTab;
+                  const isActive = filters.dashboard.status === filterTab || (filterTab === 'Pending' && filters.dashboard.status === 'Pending');
                   return (
                     <button
                       key={filterTab}
-                      onClick={() => setDashboardFilter(filterTab)}
+                      onClick={() => updateFilter('dashboard', 'status', filterTab)}
                       tabIndex={0}
                       className={`pb-3 px-3 text-xs font-black uppercase tracking-wider transition-all relative cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${
                         isActive ? 'text-blue-600 border-b-2 border-blue-600 font-extrabold' : 'text-slate-400 hover:text-slate-600'
@@ -1064,11 +1337,42 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                   <AlertTriangle size={14} className="text-rose-500 animate-bounce" /> Low Stock Medicines List
                 </h4>
                 <span className="text-[10px] text-slate-400 font-bold uppercase">
-                  {loadingLowStock ? 'Loading...' : `${lowStockItems.filter(item => {
-                    const targetStatus = dashboardFilter === 'Pending' ? 'Pending Approval' : dashboardFilter === 'PO Generated' ? 'PO Generated' : 'Completed';
-                    return item.status === targetStatus;
-                  }).length} Items`}
+                  {loadingLowStock ? 'Loading...' : `${lowStockItems.length} Total`}
                 </span>
+              </div>
+
+              {/* DASHBOARD ADVANCED FILTERS */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-wrap items-center gap-3">
+                <div className="flex-1 min-w-[120px]">
+                  <input type="text" placeholder="Search Medicine..." value={filters.dashboard.medicine} onChange={e => updateFilter('dashboard', 'medicine', e.target.value)} className="w-full p-2 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                </div>
+                <div className="flex-1 min-w-[120px]">
+                  <input type="text" placeholder="Search Supplier..." value={filters.dashboard.supplier} onChange={e => updateFilter('dashboard', 'supplier', e.target.value)} className="w-full p-2 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                </div>
+                <div className="w-32">
+                  <select value={filters.dashboard.status} onChange={e => updateFilter('dashboard', 'status', e.target.value)} className="w-full p-2 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                    <option value="All">All Status</option>
+                    <option value="Pending">Pending Approval</option>
+                    <option value="PO Generated">PO Generated</option>
+                    <option value="Completed">Completed</option>
+                  </select>
+                </div>
+                <div className="w-28">
+                  <select value={filters.dashboard.unit} onChange={e => updateFilter('dashboard', 'unit', e.target.value)} className="w-full p-2 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                    <option value="">All Units</option>
+                    <option value="Box">Box</option>
+                    <option value="Strip">Strip</option>
+                    <option value="Bottle">Bottle</option>
+                  </select>
+                </div>
+                <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1">
+                  <input type="date" value={filters.dashboard.dateFrom} onChange={e => updateFilter('dashboard', 'dateFrom', e.target.value)} className="text-[10px] bg-transparent outline-none" title="From Date" />
+                  <span className="text-[9px] text-slate-300">to</span>
+                  <input type="date" value={filters.dashboard.dateTo} onChange={e => updateFilter('dashboard', 'dateTo', e.target.value)} className="text-[10px] bg-transparent outline-none" title="To Date" />
+                </div>
+                <button onClick={() => clearFilters('dashboard')} className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors" title="Clear Filters">
+                  <X size={14} />
+                </button>
               </div>
 
               <div className="overflow-x-auto">
@@ -1087,21 +1391,7 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {lowStockItems
-                      .filter(item => {
-                        const targetStatus = dashboardFilter === 'Pending' ? 'Pending Approval' : dashboardFilter === 'PO Generated' ? 'PO Generated' : 'Completed';
-                        if (item.status !== targetStatus) return false;
-                        if (filterStartDate) {
-                          const orderDate = new Date(item.lastOrderedDate);
-                          if (orderDate < new Date(filterStartDate)) return false;
-                        }
-                        if (filterEndDate) {
-                          const orderDate = new Date(item.lastOrderedDate);
-                          if (orderDate > new Date(filterEndDate)) return false;
-                        }
-                        return true;
-                      })
-                      .map(item => {
+                    {filteredLowStockItems.map(item => {
                         return (
                           <tr key={item.id} tabIndex={0} data-kb-row className="border-b border-slate-100 hover:bg-slate-50/50 kb-focusable focus:bg-blue-50/60 focus:ring-1 focus:ring-blue-300 focus:outline-none">
                             <td className="py-3.5 px-3 font-bold text-slate-805">{item.medicineName}</td>
@@ -1149,7 +1439,7 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                           </tr>
                         );
                       })}
-                    {lowStockItems.filter(item => dashboardFilter === 'PO Generated' ? item.status === 'PO Generated' : item.status === dashboardFilter).length === 0 && (
+                    {filteredLowStockItems.length === 0 && (
                       <tr>
                         <td colSpan="7" className="py-8 text-center text-slate-400 italic">No items found in this section.</td>
                       </tr>
@@ -1171,9 +1461,21 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                   <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
                     <ClipboardList size={14} className="text-blue-600" /> Purchase Request Register
                   </h4>
-                  <button onClick={() => setCurrentSubView('create')} className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase transition cursor-pointer shadow-sm">
-                    <Plus size={14} /> New Purchase Request
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <div className="relative w-full md:w-64">
+                      <input
+                        type="text"
+                        placeholder="Search PR ID or requester..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full p-2 pl-8 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      />
+                      <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    </div>
+                    <button onClick={() => setCurrentSubView('create')} className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase transition cursor-pointer shadow-sm">
+                      <Plus size={14} /> New Purchase Request
+                    </button>
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -1190,7 +1492,13 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {purchaseRequests.map(pr => (
+                      {purchaseRequests
+                        .filter(pr => {
+                          if (!searchQuery) return true;
+                          const q = searchQuery.toLowerCase();
+                          return pr.id.toLowerCase().includes(q) || (pr.requestedBy && pr.requestedBy.toLowerCase().includes(q));
+                        })
+                        .map(pr => (
                         <tr key={pr.id} className="border-b border-slate-100 hover:bg-slate-50/50">
                           <td className="py-3 px-3 font-mono font-bold text-[10px] text-slate-700">{pr.id}</td>
                           <td className="py-3 px-3 text-slate-500 font-semibold">{pr.requestDate}</td>
@@ -1462,8 +1770,48 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                   </button>
                 </div>
 
+                {/* Search and Tabs row */}
+                <div className="flex flex-col md:flex-row justify-between items-center gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-105">
+                  <div className="flex flex-wrap gap-1.5 w-full md:w-auto">
+                    {['Pending', 'Partially Received', 'Completed', 'Cancelled'].map((tab) => (
+                      <button
+                        key={tab}
+                        onClick={() => { setPoListTab(tab); updateFilter('po', 'status', ''); }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all uppercase cursor-pointer ${
+                          poListTab === tab && !filters.po.status
+                            ? 'bg-blue-600 text-white shadow-sm font-black' 
+                            : 'bg-white hover:bg-slate-150 text-slate-650 border border-slate-200'
+                        }`}
+                      >
+                        {tab}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* PO ADVANCED FILTERS */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input type="text" placeholder="PO ID..." value={filters.po.poId} onChange={e => updateFilter('po', 'poId', e.target.value)} className="w-24 p-1.5 text-xs border border-slate-200 rounded focus:ring-2 focus:ring-blue-500 outline-none" />
+                    <input type="text" placeholder="Supplier..." value={filters.po.supplier} onChange={e => updateFilter('po', 'supplier', e.target.value)} className="w-28 p-1.5 text-xs border border-slate-200 rounded focus:ring-2 focus:ring-blue-500 outline-none" />
+                    <input type="text" placeholder="Medicine..." value={filters.po.medicine} onChange={e => updateFilter('po', 'medicine', e.target.value)} className="w-28 p-1.5 text-xs border border-slate-200 rounded focus:ring-2 focus:ring-blue-500 outline-none" />
+                    <div className="flex items-center gap-1 bg-white border border-slate-200 rounded px-1">
+                      <span className="text-[10px] text-slate-400 pl-1">₹</span>
+                      <input type="number" placeholder="Min" value={filters.po.priceMin} onChange={e => updateFilter('po', 'priceMin', e.target.value)} className="w-12 p-1 text-[10px] bg-transparent outline-none" />
+                      <span className="text-[10px] text-slate-300">-</span>
+                      <input type="number" placeholder="Max" value={filters.po.priceMax} onChange={e => updateFilter('po', 'priceMax', e.target.value)} className="w-12 p-1 text-[10px] bg-transparent outline-none" />
+                    </div>
+                    <div className="flex items-center gap-1 bg-white border border-slate-200 rounded px-1">
+                      <input type="date" value={filters.po.dateFrom} onChange={e => updateFilter('po', 'dateFrom', e.target.value)} className="w-20 p-1 text-[10px] bg-transparent outline-none" title="From Date" />
+                      <span className="text-[10px] text-slate-300">-</span>
+                      <input type="date" value={filters.po.dateTo} onChange={e => updateFilter('po', 'dateTo', e.target.value)} className="w-20 p-1 text-[10px] bg-transparent outline-none" title="To Date" />
+                    </div>
+                    <button onClick={() => clearFilters('po')} className="p-1.5 text-rose-500 hover:bg-rose-50 rounded transition-colors" title="Clear Filters">
+                      <X size={14} />
+                    </button>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {purchaseOrders.map(po => {
+                  {filteredPurchaseOrders.map(po => {
                     const statusDisplay = getPOStatusDisplay(po.status);
                     const totalItems = po.items?.length || 0;
                     const dateStr = new Date(po.createdAt).toLocaleDateString('en-IN');
@@ -1515,23 +1863,25 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                           >
                             View
                           </button>
-                          <button
-                            onClick={() => {
-                              setSelectedPOIdState(po.id);
-                              setCurrentSubView('details');
-                            }}
-                            tabIndex={0}
-                            data-kb-col
-                            className="flex-1 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase transition cursor-pointer text-center kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                          >
-                            Take Action
-                          </button>
+                          {!['COMPLETED', 'Completed', 'Closed', 'CANCELLED', 'Cancelled', 'Rejected'].includes(po.status) && (
+                            <button
+                              onClick={() => {
+                                setSelectedPOIdState(po.id);
+                                setCurrentSubView('details');
+                              }}
+                              tabIndex={0}
+                              data-kb-col
+                              className="flex-1 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase transition cursor-pointer text-center kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                            >
+                              Take Action
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
                   })}
-                  {purchaseOrders.length === 0 && (
-                    <div className="col-span-full py-8 text-center text-slate-400 italic">No Purchase Orders found.</div>
+                  {filteredPurchaseOrders.length === 0 && (
+                    <div className="col-span-full py-8 text-center text-slate-400 italic">No Purchase Orders found in this tab.</div>
                   )}
                 </div>
               </div>
@@ -1557,13 +1907,10 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                   if (poMode === 'PR') {
                     await handleCreatePOFromPR(linkedPRId, prApprovedItems, poSupplier, poDeliveryDate, poPaymentTerms, poCommunicationMethod);
                   } else {
-                    const qtyEl = e.target.elements.directQty;
-                    const priceEl = e.target.elements.directPrice;
-                    const taxEl = e.target.elements.directTax;
+                    const qty = parseInt(directQty);
+                    const price = parseFloat(directPrice);
+                    const tax = parseFloat(directTax) || 0;
                     const medId = directMedicineId;
-                    const qty = parseInt(qtyEl.value);
-                    const price = parseFloat(priceEl.value);
-                    const tax = parseFloat(taxEl.value) || 0;
                     
                     if (!medId) { alert('Please select medicine.'); return; }
                     if (qty <= 0) { alert('Ordered quantity must be greater than zero.'); return; }
@@ -1646,24 +1993,24 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                         <div>
                           <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Medicine *</label>
                           <SearchableDropdown
-                            options={medicines.map(m => ({ id: m.id, name: m.name || m.medicineName }))}
+                            options={medicines.map(m => ({ id: m.id, name: `${m.medicineName || m.name} (${m.skuCode || m.id})` }))}
                             value={directMedicineId}
-                            onChange={(val) => setDirectMedicineId(val)}
+                            onChange={(val) => handleSelectDirectMedicine(val)}
                             placeholder="Type to search medicine..."
                             inputClass="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                           />
                         </div>
                         <div>
                           <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Ordered Qty *</label>
-                          <input type="number" name="directQty" defaultValue="100" min="1" className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold" required />
+                          <input type="number" name="directQty" value={directQty} onChange={(e) => setDirectQty(e.target.value)} min="1" className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold" required />
                         </div>
                         <div>
                           <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Est. Unit Price (₹) *</label>
-                          <input type="number" step="0.01" name="directPrice" defaultValue="15.00" className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold" required />
+                          <input type="number" step="0.01" name="directPrice" value={directPrice} onChange={(e) => setDirectPrice(e.target.value)} className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold" required />
                         </div>
                         <div>
                           <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Tax Percentage (%)</label>
-                          <input type="number" defaultValue="12" name="directTax" className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold" />
+                          <input type="number" name="directTax" value={directTax} onChange={(e) => setDirectTax(e.target.value)} className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold" />
                         </div>
                       </div>
                     </div>
@@ -1801,21 +2148,22 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                 {(selectedPO.status === 'PO_GENERATED' || selectedPO.status === 'Draft') && (
                   <div className="bg-slate-50/50 p-3.5 border border-slate-200 rounded-xl space-y-2 text-xs">
                     <span className="block text-[10px] font-black uppercase text-slate-500 font-bold">Add Additional Medicine to PO</span>
-                    <div className="flex gap-2">
-                      <select
-                        onChange={(e) => {
-                          handleAddPOMedicine(selectedPO.id, e.target.value);
-                          e.target.value = '';
+                      <SearchableDropdown
+                        options={medicines.map(m => ({
+                          id: m.id,
+                          name: `${m.name || m.medicineName} (${m.skuCode || m.id})`,
+                          stock: m.stock,
+                          supplier: m.supplier?.name || ''
+                        }))}
+                        value=""
+                        onChange={(val) => {
+                          if (val) {
+                            handleAddPOMedicine(selectedPO.id, val);
+                          }
                         }}
-                        tabIndex={0}
-                        className="flex-1 p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-808 cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                      >
-                        <option value="">— Select Medicine to Add —</option>
-                        {medicines.map(m => (
-                          <option key={m.id} value={m.id}>{m.name || m.medicineName} (₹{m.pricePerPiece || '15.00'})</option>
-                        ))}
-                      </select>
-                    </div>
+                        placeholder="Type to search medicine by name or code..."
+                        inputClass="flex-1 p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 cursor-text kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      />
                   </div>
                 )}
 
@@ -1875,7 +2223,22 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                                 )}
                               </td>
                               <td className="py-3 px-3 text-center text-slate-500 font-semibold">Boxes</td>
-                              <td className="py-3 px-3 text-right font-mono">₹{Number(item.unitPrice).toFixed(2)}</td>
+                              <td className="py-3 px-3 text-right font-mono">
+                                {isPendingPO ? (
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0.01"
+                                    value={item.unitPrice}
+                                    onChange={(e) => handleEditPOItemPrice(selectedPO.id, item.medicineId, e.target.value)}
+                                    tabIndex={0}
+                                    data-kb-col
+                                    className="w-20 p-1 text-right font-bold border border-slate-200 rounded text-xs bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                  />
+                                ) : (
+                                  `₹${Number(item.unitPrice).toFixed(2)}`
+                                )}
+                              </td>
                               <td className="py-3 px-3 text-right font-mono font-bold text-slate-800">₹{Number(item.total).toFixed(2)}</td>
                               {isPendingPO && (
                                 <td className="py-3 px-3 text-right">
@@ -2147,7 +2510,44 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                     setCurrentSubView('create');
                   }} tabIndex={0} className="flex items-center gap-1 px-3 py-1.5 bg-emerald-605 hover:bg-emerald-700 text-white bg-emerald-600 rounded-xl text-xs font-black uppercase transition cursor-pointer shadow-sm kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">
                     <Plus size={14} /> Record Goods Receipt (GRN)
-                  </button>
+                          </button>
+                </div>
+
+                {/* Search and Tabs row for GRN */}
+                <div className="flex flex-col md:flex-row justify-between items-center gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-105">
+                  <div className="flex flex-wrap gap-1.5 w-full md:w-auto">
+                    {['Draft', 'Completed'].map((tab) => (
+                      <button
+                        key={tab}
+                        onClick={() => setGrnListTab(tab)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all uppercase cursor-pointer ${
+                          grnListTab === tab 
+                            ? 'bg-amber-500 text-white shadow-sm font-black' 
+                            : 'bg-white hover:bg-slate-150 text-slate-650 border border-slate-200'
+                        }`}
+                      >
+                        {tab} GRNs
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* GRN ADVANCED FILTERS */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input type="text" placeholder="PO ID..." value={filters.grn.poId} onChange={e => updateFilter('grn', 'poId', e.target.value)} className="w-20 p-1.5 text-xs border border-slate-200 rounded focus:ring-2 focus:ring-blue-500 outline-none" />
+                    <input type="text" placeholder="Invoice..." value={filters.grn.invoice} onChange={e => updateFilter('grn', 'invoice', e.target.value)} className="w-20 p-1.5 text-xs border border-slate-200 rounded focus:ring-2 focus:ring-blue-500 outline-none" />
+                    <input type="text" placeholder="Supplier..." value={filters.grn.supplier} onChange={e => updateFilter('grn', 'supplier', e.target.value)} className="w-24 p-1.5 text-xs border border-slate-200 rounded focus:ring-2 focus:ring-blue-500 outline-none" />
+                    <input type="text" placeholder="Medicine..." value={filters.grn.medicine} onChange={e => updateFilter('grn', 'medicine', e.target.value)} className="w-24 p-1.5 text-xs border border-slate-200 rounded focus:ring-2 focus:ring-blue-500 outline-none" />
+                    
+                    <div className="flex items-center gap-1 bg-white border border-slate-200 rounded px-1">
+                      <input type="date" value={filters.grn.dateFrom} onChange={e => updateFilter('grn', 'dateFrom', e.target.value)} className="w-20 p-1 text-[10px] bg-transparent outline-none" title="From Date" />
+                      <span className="text-[10px] text-slate-300">-</span>
+                      <input type="date" value={filters.grn.dateTo} onChange={e => updateFilter('grn', 'dateTo', e.target.value)} className="w-20 p-1 text-[10px] bg-transparent outline-none" title="To Date" />
+                    </div>
+                    
+                    <button onClick={() => clearFilters('grn')} className="p-1.5 text-rose-500 hover:bg-rose-50 rounded transition-colors" title="Clear Filters">
+                      <X size={14} />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -2164,31 +2564,63 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {goodsReceipts.map(grn => (
+                      {filteredGoodsReceipts.map(grn => (
                         <tr key={grn.id} tabIndex={0} data-kb-row className="border-b border-slate-100 hover:bg-slate-50/50 kb-focusable focus:bg-blue-50/60 focus:ring-1 focus:ring-blue-300 focus:outline-none">
                           <td className="py-3 px-3 font-mono font-bold text-slate-700">{grn.id}</td>
                           <td className="py-3 px-3 font-mono text-slate-450">{grn.poId}</td>
-                          <td className="py-3 px-3 font-bold text-slate-700">{grn.supplierName}</td>
+                          <td className="py-3 px-3 font-bold text-slate-700">{getSupplierName(grn.purchaseOrder?.supplier || purchaseOrders.find(p => p.id === grn.poId)?.supplier || grn.supplierName || grn.supplierId)}</td>
                           <td className="py-3 px-3 text-slate-450">{new Date(grn.receivedDate).toLocaleDateString('en-IN')}</td>
                           <td className="py-3 px-3 text-center font-bold">{grn.items?.length || 0}</td>
                           <td className="py-3 px-3 text-center">
                             <span className="px-2.5 py-0.5 rounded-full text-[8px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">{grn.status}</span>
                           </td>
                           <td className="py-3 px-3 text-right">
-                            <button
-                              onClick={() => {
-                                setSelectedGRNIdState(grn.id);
-                                setCurrentSubView('details');
-                              }}
-                              tabIndex={0}
-                              data-kb-col
-                              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg text-[9px] font-black uppercase text-slate-700 transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                            >
-                              View Details
-                            </button>
+                            {grn.status === 'Draft' ? (
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  onClick={() => {
+                                    loadDraftGRN(grn);
+                                    setCurrentSubView('create');
+                                  }}
+                                  tabIndex={0}
+                                  data-kb-col
+                                  className="p-1.5 text-blue-600 hover:bg-blue-50 hover:text-blue-700 rounded-lg kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                >
+                                  <Edit size={16} />
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setSelectedGRNIdState(grn.id);
+                                    setCurrentSubView('details');
+                                  }}
+                                  tabIndex={0}
+                                  data-kb-col
+                                  className="p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 rounded-lg kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                >
+                                  <ChevronRight size={16} />
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  setSelectedGRNIdState(grn.id);
+                                  setCurrentSubView('details');
+                                }}
+                                tabIndex={0}
+                                data-kb-col
+                                className="p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 rounded-lg kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                              >
+                                <ChevronRight size={16} />
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}
+                      {filteredGoodsReceipts.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="py-8 text-center text-slate-400 italic">No GRN records found in this tab.</td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -2209,19 +2641,21 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
                       <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Select Purchase Order *</label>
-                      <select value={selectedPOId} onChange={(e) => loadPOItems(e.target.value)}
-                        tabIndex={0}
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-805 cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                        <option value="">— Select PO —</option>
-                        {pendingGRNOrders.map(po => <option key={po.id} value={po.id}>{po.id} — {getSupplierName(po.supplier)}</option>)}
-                      </select>
+                      <SearchableDropdown
+                        options={pendingGRNOrders.map(po => ({ id: po.id, name: `${po.id} — ${getSupplierName(po.supplier)}` }))}
+                        value={selectedPOId}
+                        onChange={(val) => loadPOItems(val)}
+                        placeholder="Type to search PO ID..."
+                        inputClass="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-705 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      />
                     </div>
 
                     <div>
                       <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Supplier Invoice reference *</label>
                       <input type="text" placeholder="e.g. INV-2021" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)}
                         tabIndex={0}
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none" required />
+                        className={`w-full p-2.5 bg-slate-50 border ${invoiceError ? 'border-rose-400 focus:ring-rose-500' : 'border-slate-200 focus:ring-blue-500'} rounded-xl text-xs font-bold kb-focusable focus:ring-2 focus:outline-none`} required />
+                      {invoiceError && <span className="text-[9px] font-bold text-rose-600 block mt-1">{invoiceError}</span>}
                     </div>
 
                     <div>
@@ -2237,119 +2671,175 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                       <span className="block text-[10px] font-black uppercase text-slate-500 border-b border-slate-100 pb-1">Quality Inspection Items Checklist:</span>
                       
                       {grnItems.map((item, idx) => {
-                        const remaining = item.orderedQty - item.alreadyReceived;
+                        const remaining = item.orderedQty - item.alreadyReceived - item.alreadyCancelled;
                         const rx = parseInt(item.receivedQty) || 0; // Current Raw Received Quantity input
                         const dmg = parseInt(item.damagedQty) || 0;  // Damaged Quantity input
-                        const pending = remaining - rx;              // Pending Quantity auto-calculated
-                        const accepted = rx - dmg;                    // Accepted Quantity auto-calculated
+                        const cancelled = parseInt(item.cancelledQty) || 0; // Cancelled Quantity input
+                        const pending = Math.max(0, remaining - rx - cancelled); // Pending Quantity auto-calculated
+                        const accepted = Math.max(0, rx - dmg);                    // Accepted Quantity auto-calculated
 
                         return (
                           <div key={idx} tabIndex={0} data-kb-row className="p-3.5 bg-blue-50/50 border border-blue-100 rounded-2xl space-y-3 kb-focusable focus:ring-2 focus:ring-blue-400 focus:bg-slate-50/50 focus:outline-none">
                             <div className="flex flex-wrap justify-between items-center text-xs gap-2">
-                              <span className="font-extrabold text-blue-800">{item.medicineName}</span>
+                              <div className="flex items-center gap-3">
+                                <span className="font-extrabold text-blue-800">{item.medicineName}</span>
+                                {item.itemStatus && item.itemStatus !== 'Pending' && (
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider ${
+                                    item.itemStatus === 'Completed' || item.itemStatus === 'Received' ? 'bg-emerald-100 text-emerald-800' :
+                                    item.itemStatus === 'Partially Received' ? 'bg-blue-100 text-blue-800' :
+                                    item.itemStatus === 'Damaged' ? 'bg-rose-100 text-rose-800' :
+                                    item.itemStatus === 'Cancelled' ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-600'
+                                  }`}>
+                                    {item.itemStatus}
+                                  </span>
+                                )}
+                              </div>
                               <div className="flex flex-wrap gap-2.5 text-[9px] font-bold text-slate-500 uppercase tracking-wider">
                                 <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-700">Ordered: {item.orderedQty}</span>
                                 <span className="bg-emerald-100 px-1.5 py-0.5 rounded text-emerald-800">Rec. Previously: {item.alreadyReceived}</span>
-                                <span className="bg-blue-100 px-1.5 py-0.5 rounded text-blue-800">Accepted Quantity: {accepted}</span>
-                                <span className={`${pending < 0 ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'} px-1.5 py-0.5 rounded`}>Pending Quantity: {pending}</span>
+                                {item.alreadyCancelled > 0 && <span className="bg-rose-100 px-1.5 py-0.5 rounded text-rose-800">Cancelled Previously: {item.alreadyCancelled}</span>}
+                                <span className="bg-blue-100 px-1.5 py-0.5 rounded text-blue-800 font-black">Accepted this GRN: {accepted}</span>
+                                <span className={`${pending > 0 ? 'bg-amber-100 text-amber-800 font-bold' : 'bg-slate-100 text-slate-450'} px-1.5 py-0.5 rounded`}>Pending Qty: {pending}</span>
                               </div>
                             </div>
 
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
                               <div>
                                 <label className="block text-[8px] font-bold text-slate-400 uppercase mb-0.5">Batch Number *</label>
                                 <input type="text" value={item.batchNumber || ''} onChange={(e) => updateGrnItem(idx, 'batchNumber', e.target.value)}
                                   tabIndex={0}
                                   data-kb-col
-                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none" required />
+                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none" required />
                               </div>
                               <div>
                                 <label className="block text-[8px] font-bold text-slate-400 uppercase mb-0.5">Current Received Qty *</label>
                                 <input type="number" value={item.receivedQty} onChange={(e) => updateGrnItem(idx, 'receivedQty', e.target.value)}
                                   tabIndex={0}
                                   data-kb-col
-                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none" required />
+                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none" required />
+                              </div>
+                              <div>
+                                <label className="block text-[8px] font-bold text-slate-400 uppercase mb-0.5">Damaged Qty</label>
+                                <input type="number" value={item.damagedQty} onChange={(e) => updateGrnItem(idx, 'damagedQty', e.target.value)}
+                                  tabIndex={0}
+                                  data-kb-col
+                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+                              </div>
+                              <div>
+                                <label className="block text-[8px] font-bold text-slate-400 uppercase mb-0.5">Cancelled Qty</label>
+                                <input type="number" value={item.cancelledQty} onChange={(e) => updateGrnItem(idx, 'cancelledQty', e.target.value)}
+                                  tabIndex={0}
+                                  data-kb-col
+                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none" />
                               </div>
                               <div>
                                 <label className="block text-[8px] font-bold text-slate-400 uppercase mb-0.5">Mfg Date *</label>
                                 <input type="date" value={item.mfgDate || ''} onChange={(e) => updateGrnItem(idx, 'mfgDate', e.target.value)}
                                   tabIndex={0}
                                   data-kb-col
-                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none" required />
+                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none" required />
                               </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
                               <div>
                                 <label className="block text-[8px] font-bold text-slate-400 uppercase mb-0.5">Expiry Date *</label>
                                 <input type="date" value={item.expiryDate || ''} onChange={(e) => updateGrnItem(idx, 'expiryDate', e.target.value)}
                                   tabIndex={0}
                                   data-kb-col
-                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none" required />
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-2 text-xs">
-                              <div>
-                                <label className="block text-[8px] font-bold text-slate-400 uppercase mb-0.5">Damaged Qty</label>
-                                <input type="number" value={item.damagedQty} onChange={(e) => updateGrnItem(idx, 'damagedQty', e.target.value)}
-                                  tabIndex={0}
-                                  data-kb-col
-                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none" required />
                               </div>
                               <div>
                                 <label className="block text-[8px] font-bold text-slate-400 uppercase mb-0.5">Remarks / Details</label>
                                 <input type="text" placeholder="Remarks..." value={item.remarks || ''} onChange={(e) => updateGrnItem(idx, 'remarks', e.target.value)}
                                   tabIndex={0}
                                   data-kb-col
-                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none" />
+                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none" />
                               </div>
                             </div>
-                          
-                          <div className="flex gap-2 justify-end pt-1 border-t border-slate-100/50 mt-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const remaining = item.orderedQty - item.alreadyReceived;
-                                updateGrnItem(idx, 'receivedQty', remaining);
-                              }}
-                              tabIndex={0}
-                              data-kb-col
-                              className="px-2 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded text-[9px] font-bold cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                            >
-                              Mark Received
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const qty = parseInt(item.receivedQty) || 0;
-                                updateGrnItem(idx, 'damagedQty', qty);
-                              }}
-                              tabIndex={0}
-                              data-kb-col
-                              className="px-2 py-0.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded text-[9px] font-bold cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                            >
-                              Mark Damaged
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                updateGrnItem(idx, 'receivedQty', 0);
-                                updateGrnItem(idx, 'damagedQty', 0);
-                              }}
-                              tabIndex={0}
-                              data-kb-col
-                              className="px-2 py-0.5 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 rounded text-[9px] font-bold cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                            >
-                              Cancel Item
-                            </button>
+
+                            {cancelled > 0 && (
+                              <div className="text-xs space-y-1">
+                                <label className="block text-[8px] font-bold text-rose-600 uppercase">Reason for Cancellation *</label>
+                                <textarea
+                                  placeholder="Provide short explanation why this quantity is cancelled..."
+                                  value={item.cancelReason || ''}
+                                  onChange={(e) => updateGrnItem(idx, 'cancelReason', e.target.value)}
+                                  tabIndex={0}
+                                  data-kb-col
+                                  rows={1}
+                                  className="w-full p-2 bg-white border border-rose-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 focus:outline-none"
+                                  required
+                                />
+                              </div>
+                            )}
+
+                            <div className="flex gap-2 justify-end pt-1 border-t border-slate-100/50 mt-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (rx <= 0) { toast.error("Please enter a valid Received Qty first."); return; }
+                                  if (rx + cancelled > remaining) { toast.error("Total quantity exceeds remaining ordered quantity."); return; }
+                                  updateGrnItem(idx, 'itemStatus', pending === 0 ? 'Received' : 'Partially Received');
+                                }}
+                                tabIndex={0}
+                                data-kb-col
+                                className="px-2 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded text-[9px] font-bold cursor-pointer focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                              >
+                                Mark Received
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (dmg <= 0) { toast.error("Please enter a Damaged Qty."); return; }
+                                  if (!item.remarks || !item.remarks.trim()) { toast.error("Please provide a damage reason in Remarks."); return; }
+                                  updateGrnItem(idx, 'itemStatus', 'Damaged');
+                                }}
+                                tabIndex={0}
+                                data-kb-col
+                                className="px-2 py-0.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded text-[9px] font-bold cursor-pointer focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                              >
+                                Mark Damaged
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (cancelled <= 0) { toast.error("Please enter a Cancelled Qty."); return; }
+                                  if (!item.cancelReason || !item.cancelReason.trim()) { toast.error("Please provide a reason for cancellation."); return; }
+                                  updateGrnItem(idx, 'itemStatus', 'Cancelled');
+                                }}
+                                tabIndex={0}
+                                data-kb-col
+                                className="px-2 py-0.5 bg-rose-50 hover:bg-rose-100 text-rose-750 border border-rose-200 rounded text-[9px] font-bold cursor-pointer focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                              >
+                                Mark Cancelled
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateGrnItem(idx, 'receivedQty', 0);
+                                  updateGrnItem(idx, 'damagedQty', 0);
+                                  updateGrnItem(idx, 'cancelledQty', 0);
+                                  updateGrnItem(idx, 'cancelReason', '');
+                                  updateGrnItem(idx, 'remarks', '');
+                                  updateGrnItem(idx, 'itemStatus', 'Pending');
+                                }}
+                                tabIndex={0}
+                                data-kb-col
+                                className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 rounded text-[9px] font-bold cursor-pointer focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                              >
+                                Reset Qty
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
                     </div>
                   )}
 
                   <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
                     <button type="button" onClick={() => resetNavigation('grn', 'list')} tabIndex={0} className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-bold uppercase cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">Cancel</button>
-                    <button type="button" onClick={() => { alert('GRN Draft saved successfully.'); resetNavigation('grn', 'list'); }} tabIndex={0} className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-bold uppercase cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">Save Draft</button>
+                    <button type="button" onClick={handleGRNDraftSubmitLocal} tabIndex={0} className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-bold uppercase cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">Save Draft</button>
                     <button type="submit" disabled={!selectedPOId || grnItems.length === 0}
                       tabIndex={0}
                       className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-xl text-xs font-black uppercase shadow-sm cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none">
@@ -2371,11 +2861,26 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                 </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-50 p-4 rounded-xl text-xs">
-                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Received Date</span><span className="font-bold">{new Date(selectedGRN.receivedDate).toLocaleString('en-IN')}</span></div>
-                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Received By</span><span className="font-bold">{selectedGRN.receivedBy}</span></div>
-                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Invoice Reference</span><span className="font-bold text-slate-700">{selectedGRN.invoiceNumber}</span></div>
-                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">PO Link</span><span className="font-mono text-slate-500 font-bold">{selectedGRN.poId}</span></div>
-                  <div tabIndex={0} data-kb-col className="kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none"><span className="text-slate-400 block font-bold uppercase text-[9px]">Supplier</span><span className="font-bold">{getSupplierName(selectedGRN.supplierId)}</span></div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">PO Reference</label>
+                    <div className="font-mono text-sm font-bold text-slate-700">{selectedGRN.poId}</div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Supplier Name</label>
+                    <div className="text-sm font-bold text-slate-700">{getSupplierName(selectedGRN.purchaseOrder?.supplier || purchaseOrders.find(p => p.id === selectedGRN.poId)?.supplier)}</div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Invoice Number</label>
+                    <div className="font-mono text-sm font-bold text-slate-700">{selectedGRN.invoiceNumber || 'N/A'}</div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Status</label>
+                    <div className="text-sm font-bold text-slate-700">{selectedGRN.status}</div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Completed Date</label>
+                    <div className="text-sm font-bold text-slate-700">{selectedGRN.completedDate ? new Date(selectedGRN.completedDate).toLocaleString('en-IN') : 'N/A'}</div>
+                  </div>
                 </div>
 
                 <div className="space-y-3">
@@ -2384,10 +2889,16 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
                         <tr className="bg-slate-50 text-slate-400 uppercase font-black text-[9px] border-b border-slate-200">
-                          <th className="py-2 px-3">Medicine</th>
-                          <th className="py-2 px-3">Batch Number</th>
-                          <th className="py-2 px-3 text-center">Qty Received</th>
+                          <th className="py-2 px-3">Medicine Name</th>
+                          <th className="py-2 px-3 text-center">Ordered</th>
+                          <th className="py-2 px-3">Batch</th>
+                          <th className="py-2 px-3 text-center">Received</th>
                           <th className="py-2 px-3 text-center">Damaged</th>
+                          <th className="py-2 px-3 text-center">Cancelled</th>
+                          <th className="py-2 px-3 text-center">Accepted</th>
+                          <th className="py-2 px-3 text-center">Pending</th>
+                          <th className="py-2 px-3">Remarks</th>
+                          <th className="py-2 px-3">Status</th>
                           <th className="py-2 px-3">Mfg Date</th>
                           <th className="py-2 px-3">Expiry Date</th>
                         </tr>
@@ -2396,11 +2907,16 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                         {selectedGRN.items?.map((item, idx) => (
                           <tr key={idx} className="border-b border-slate-100 hover:bg-slate-50/50">
                             <td className="py-3 px-3 font-bold text-slate-800">{item.medicineName || `Med #${item.medicineId}`}</td>
-                            <td className="py-3 px-3 font-mono text-slate-500 font-bold text-[10px]">{item.batchNumber}</td>
-                            <td className="py-3 px-3 text-center font-mono font-black text-emerald-600">{item.receivedQty}</td>
-                            <td className="py-3 px-3 text-center font-mono text-rose-500 font-bold">{item.damagedQty}</td>
-                            <td className="py-3 px-3 text-slate-500">{new Date(item.mfgDate).toLocaleDateString('en-IN')}</td>
-                            <td className="py-3 px-3 text-slate-500">{new Date(item.expiryDate).toLocaleDateString('en-IN')}</td>
+                            <td className="py-3 px-3 text-center text-slate-500 font-bold">{item.orderedQty || 0}</td>
+                            <td className="py-3 px-3 font-mono text-slate-500 font-bold text-[10px]">{item.batchNumber || 'N/A'}</td>
+                            <td className="py-3 px-3 text-center font-mono font-black text-emerald-600">{item.receivedQty || 0}</td>
+                            <td className="py-3 px-3 text-center font-mono text-rose-500 font-bold">{item.damagedQty || 0}</td>
+                            <td className="py-3 px-3 text-center font-mono text-rose-500 font-bold">{item.cancelledQty || 0}</td>
+                            <td className="py-3 px-3 text-center font-mono font-black text-blue-600">{item.acceptedQty || 0}</td>
+                            <td className="py-3 px-3 text-center font-mono text-amber-500 font-bold">{item.pendingQty || 0}</td>
+                            <td className="py-3 px-3 text-slate-500 text-[10px]">{item.remarks || '-'}</td>
+                            <td className="py-3 px-3 text-slate-500">{item.status || 'Completed'}</td>
+                            <td className="py-3 px-3 text-slate-500">{item.expiryDate ? new Date(item.expiryDate).toLocaleDateString('en-IN') : 'N/A'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -2422,89 +2938,39 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                   </h4>
                   <p className="text-[10px] text-slate-400 font-bold mt-0.5">Chronological ledger of completed and cancelled procurement order cycles.</p>
                 </div>
+              </div>
 
-                {/* Date Range Filter - Right Side */}
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
-                    {/* Start Date: type or pick */}
-                    <div className="flex items-center gap-1 relative">
-                      <input
-                        type="text"
-                        value={formatDateDisplay(filterStartDate)}
-                        onChange={(e) => {
-                          const parsed = parseTypedDate(e.target.value);
-                          if (parsed) setFilterStartDate(parsed);
-                          else if (e.target.value === '') setFilterStartDate('');
-                        }}
-                        placeholder="DD/MM/YYYY"
-                        tabIndex={0}
-                        className="kb-focusable bg-transparent text-xs font-semibold text-slate-600 border-none outline-none focus:ring-0 w-[88px] placeholder:text-slate-300"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => startDateRef.current?.showPicker?.()}
-                        tabIndex={0}
-                        title="Pick from calendar"
-                        className="text-slate-400 hover:text-blue-500 transition-colors kb-focusable focus:outline-none focus:text-blue-500 cursor-pointer"
-                      >
-                        <Calendar size={13} />
-                      </button>
-                      <input
-                        ref={startDateRef}
-                        type="date"
-                        value={filterStartDate || ''}
-                        onChange={(e) => setFilterStartDate(e.target.value)}
-                        className="absolute opacity-0 w-0 h-0 pointer-events-none"
-                        tabIndex={-1}
-                      />
-                    </div>
-
-                    <span className="text-[10px] font-bold text-slate-300 uppercase">to</span>
-
-                    {/* End Date: type or pick */}
-                    <div className="flex items-center gap-1 relative">
-                      <input
-                        type="text"
-                        value={formatDateDisplay(filterEndDate)}
-                        onChange={(e) => {
-                          const parsed = parseTypedDate(e.target.value);
-                          if (parsed) setFilterEndDate(parsed);
-                          else if (e.target.value === '') setFilterEndDate('');
-                        }}
-                        placeholder="DD/MM/YYYY"
-                        tabIndex={0}
-                        className="kb-focusable bg-transparent text-xs font-semibold text-slate-600 border-none outline-none focus:ring-0 w-[88px] placeholder:text-slate-300"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => endDateRef.current?.showPicker?.()}
-                        tabIndex={0}
-                        title="Pick from calendar"
-                        className="text-slate-400 hover:text-blue-500 transition-colors kb-focusable focus:outline-none focus:text-blue-500 cursor-pointer"
-                      >
-                        <Calendar size={13} />
-                      </button>
-                      <input
-                        ref={endDateRef}
-                        type="date"
-                        value={filterEndDate || ''}
-                        onChange={(e) => setFilterEndDate(e.target.value)}
-                        className="absolute opacity-0 w-0 h-0 pointer-events-none"
-                        tabIndex={-1}
-                      />
-                    </div>
-                  </div>
-
-                  {(filterStartDate || filterEndDate) && (
-                    <button
-                      onClick={() => { setFilterStartDate(''); setFilterEndDate(''); }}
-                      tabIndex={0}
-                      className="flex items-center gap-1 px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-500 hover:text-rose-600 border border-rose-200 rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all kb-focusable focus:ring-2 focus:ring-rose-400 focus:outline-none"
-                    >
-                      <X size={11} /> Clear
-                    </button>
-                  )}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-wrap items-center gap-3">
+                <div className="flex-1 min-w-[120px]">
+                  <input type="text" placeholder="PO ID..." value={filters.history.poId} onChange={e => updateFilter('history', 'poId', e.target.value)} className="w-full p-2 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
                 </div>
+                <div className="flex-1 min-w-[120px]">
+                  <input type="text" placeholder="GRN ID..." value={filters.history.grnId} onChange={e => updateFilter('history', 'grnId', e.target.value)} className="w-full p-2 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                </div>
+                <div className="flex-1 min-w-[120px]">
+                  <input type="text" placeholder="Invoice..." value={filters.history.invoice} onChange={e => updateFilter('history', 'invoice', e.target.value)} className="w-full p-2 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                </div>
+                <div className="flex-1 min-w-[120px]">
+                  <input type="text" placeholder="Supplier..." value={filters.history.supplier} onChange={e => updateFilter('history', 'supplier', e.target.value)} className="w-full p-2 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                </div>
+                <div className="flex-1 min-w-[120px]">
+                  <input type="text" placeholder="Medicine..." value={filters.history.medicine} onChange={e => updateFilter('history', 'medicine', e.target.value)} className="w-full p-2 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                </div>
+                <div className="w-32">
+                  <select value={filters.history.status} onChange={e => updateFilter('history', 'status', e.target.value)} className="w-full p-2 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                    <option value="">All Statuses</option>
+                    <option value="Completed">Completed</option>
+                    <option value="Cancelled">Cancelled</option>
+                  </select>
+                </div>
+                <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1">
+                  <input type="date" value={filters.history.dateFrom} onChange={e => updateFilter('history', 'dateFrom', e.target.value)} className="text-[10px] bg-transparent outline-none" title="From Date" />
+                  <span className="text-[9px] text-slate-300">to</span>
+                  <input type="date" value={filters.history.dateTo} onChange={e => updateFilter('history', 'dateTo', e.target.value)} className="text-[10px] bg-transparent outline-none" title="To Date" />
+                </div>
+                <button onClick={() => clearFilters('history')} className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors" title="Clear Filters">
+                  <X size={14} />
+                </button>
               </div>
 
               <div className="overflow-x-auto">
@@ -2526,14 +2992,37 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                   <tbody>
                       {completedPOs
                         .filter(po => {
-                          if (filterStartDate) {
-                            const compDate = new Date(po.updatedAt);
-                            if (compDate < new Date(filterStartDate)) return false;
+                          const { dateFrom, dateTo, supplier, medicine, invoice, poId, grnId, status } = filters.history;
+                          
+                          // Date Filter
+                          if (dateFrom && new Date(po.updatedAt) < new Date(dateFrom)) return false;
+                          if (dateTo && new Date(po.updatedAt) > new Date(dateTo)) return false;
+                          
+                          // Status Filter
+                          if (status && po.status !== status && po.status !== status.toUpperCase()) return false;
+                          
+                          // PO ID Filter
+                          if (poId && !po.id.toLowerCase().includes(poId.toLowerCase())) return false;
+                          
+                          // Supplier Filter
+                          if (supplier && !getSupplierName(po.supplier).toLowerCase().includes(supplier.toLowerCase())) return false;
+                          
+                          // GRN & Invoice Filter
+                          if (grnId || invoice) {
+                            let hasGrnMatch = false;
+                            if (po.grns && po.grns.length > 0) {
+                              hasGrnMatch = po.grns.some(g => {
+                                const idMatch = !grnId || g.id.toLowerCase().includes(grnId.toLowerCase());
+                                const invMatch = !invoice || (g.invoiceNumber && g.invoiceNumber.toLowerCase().includes(invoice.toLowerCase()));
+                                return idMatch && invMatch;
+                              });
+                            }
+                            if (!hasGrnMatch) return false;
                           }
-                          if (filterEndDate) {
-                            const compDate = new Date(po.updatedAt);
-                            if (compDate > new Date(filterEndDate)) return false;
-                          }
+                          
+                          // Medicine Filter
+                          if (medicine && !po.items?.some(it => (it.medicineName || '').toLowerCase().includes(medicine.toLowerCase()))) return false;
+                          
                           return true;
                         })
                         .map(po => {
