@@ -915,6 +915,12 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
     return purchaseOrders.filter(po => {
       const { dateFrom, dateTo, supplier, medicine, unit, priceMin, priceMax, status, poId } = filters.po;
       
+      const isAnyFilterActive = !!(dateFrom || dateTo || supplier || medicine || unit || priceMin || priceMax || status || poId);
+      if (!isAnyFilterActive) {
+        const recordTime = new Date(po.updatedAt || po.createdAt || po.poDate).getTime();
+        if (Date.now() - recordTime > 24 * 60 * 60 * 1000) return false;
+      }
+      
       // Legacy Tab Status mapping combined with Advanced Status filter
       let currentStatusTab = poListTab; 
       if (status) currentStatusTab = status; // If advanced status is picked, it overrides tab
@@ -953,6 +959,12 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
   const filteredGoodsReceipts = useMemo(() => {
     return goodsReceipts.filter(grn => {
       const { dateFrom, dateTo, supplier, medicine, invoice, poId, status, unit } = filters.grn;
+      
+      const isAnyFilterActive = !!(dateFrom || dateTo || supplier || medicine || invoice || poId || status || unit);
+      if (!isAnyFilterActive) {
+        const recordTime = new Date(grn.completedDate || grn.receivedDate || grn.createdAt || grn.updatedAt).getTime();
+        if (Date.now() - recordTime > 24 * 60 * 60 * 1000) return false;
+      }
       
       const resolvedSupplier = grn.supplierName || grn.purchaseOrder?.supplier || grn.supplierId;
       
@@ -3019,6 +3031,12 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                       {completedPOs
                         .filter(po => {
                           const { dateFrom, dateTo, supplier, medicine, invoice, poId, grnId, status } = filters.history;
+                          
+                          const isAnyFilterActive = !!(dateFrom || dateTo || supplier || medicine || invoice || poId || grnId || status);
+                          if (!isAnyFilterActive) {
+                            const recordTime = new Date(po.updatedAt || po.createdAt).getTime();
+                            if (Date.now() - recordTime > 24 * 60 * 60 * 1000) return false;
+                          }
                           
                           // Date Filter
                           if (dateFrom && new Date(po.updatedAt) < new Date(dateFrom)) return false;
