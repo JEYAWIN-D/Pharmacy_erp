@@ -7,52 +7,67 @@ export const dashboardController = {
     try {
       const today = new Date();
       const startOfDay = new Date(today.setHours(0, 0, 0, 0));
-      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-      const ninetyDays = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+      const endOfDay = new Date(today.setHours(23, 59, 59, 999));
 
       const [
-        totalMedicines,
-        lowStockMedicines,
-        totalSuppliers,
-        totalBatches,
-        expiringBatches,
-        pendingPrescriptions,
-        totalCustomers,
-        todayBillCount,
-        todayRevenue,
-        unresolvedNotifications,
-        pendingPOs,
-        totalInventoryLogs
+        todayBills,
+        todayCash,
+        todayUpi,
+        whStockCount,
+        rackStockCount,
+        supplierPayableAgg,
+        customerReceivableAgg,
+        urgentNotifs
       ] = await Promise.all([
-        prisma.medicine.count({ where: { isDeleted: false, isActive: true } }),
-        prisma.medicine.count({ where: { isDeleted: false, isActive: true, stockQuantity: { lte: prisma.medicine.fields.reorderLevel } } }).catch(() => 0),
-        prisma.supplier.count({ where: { isDeleted: false, isActive: true } }),
-        prisma.medicineBatch.count({ where: { isDeleted: false, status: 'Active' } }),
-        prisma.medicineBatch.count({ where: { isDeleted: false, status: 'Active', expiryDate: { lte: ninetyDays, gte: new Date() } } }),
-        prisma.prescription.count({ where: { isDeleted: false, status: 'Pending' } }),
-        prisma.customer.count({ where: { isDeleted: false } }),
-        prisma.bill.count({ where: { isDeleted: false, createdAt: { gte: startOfDay } } }),
-        prisma.bill.aggregate({ where: { isDeleted: false, createdAt: { gte: startOfDay }, paymentStatus: 'Paid' }, _sum: { grandTotal: true } }),
-        prisma.notification.count({ where: { resolved: false } }),
-        prisma.purchaseOrder.count({ where: { status: 'Pending Approval' } }),
-        prisma.inventoryLog.count()
+        prisma.bill.findMany({
+          where: { isDeleted: false, createdAt: { gte: startOfDay, lte: endOfDay } }
+        }),
+        prisma.paymentTransaction.aggregate({
+          where: { createdAt: { gte: startOfDay, lte: endOfDay } },
+          _sum: { cashPaid: true }
+        }),
+        prisma.paymentTransaction.aggregate({
+          where: { createdAt: { gte: startOfDay, lte: endOfDay } },
+          _sum: { upiPaid: true }
+        }),
+        prisma.warehouseStock.aggregate({
+          _sum: { qty: true }
+        }),
+        prisma.rackStock.aggregate({
+          _sum: { qty: true }
+        }),
+        prisma.financeSupplierPayment.aggregate({
+          where: { status: { in: ['Pending', 'Partially Paid'] } },
+          _sum: { pendingAmount: true }
+        }),
+        prisma.customer.aggregate({
+          _sum: { outstandingBalance: true }
+        }),
+        prisma.notification.findMany({
+          where: { resolved: false },
+          orderBy: { createdAt: 'desc' },
+          take: 5
+        })
       ]);
 
-      // Get medicines with actual low stock (manual check)
-      const medicines = await prisma.medicine.findMany({
-        where: { isDeleted: false, isActive: true },
-        select: { id: true, medicineName: true, stockQuantity: true, reorderLevel: true }
-      });
-      const lowStock = medicines.filter(m => m.stockQuantity <= m.reorderLevel).length;
+      const todaySales = todayBills.reduce((sum, b) => sum + Number(b.grandTotal || 0), 0);
+      const todayCredit = todayBills.reduce((sum, b) => sum + Number(b.balanceAmount || 0), 0);
 
-      // Recent sales for chart (last 7 days)
+      // Enforce reorderLevel exact counts
+      const allActiveMed = await prisma.medicine.findMany({
+        where: { isDeleted: false, isActive: true },
+        select: { stockQuantity: true, reorderLevel: true }
+      });
+      const lowStockRealCount = allActiveMed.filter(m => m.stockQuantity <= m.reorderLevel).length;
+
+      // 7-day chart
       const salesChart = [];
       for (let i = 6; i >= 0; i--) {
         const date = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
         const start = new Date(date.setHours(0, 0, 0, 0));
         const end = new Date(date.setHours(23, 59, 59, 999));
         const dayRevenue = await prisma.bill.aggregate({
-          where: { isDeleted: false, paymentStatus: 'Paid', createdAt: { gte: start, lte: end } },
+          where: { isDeleted: false, createdAt: { gte: start, lte: end } },
           _sum: { grandTotal: true }
         });
         salesChart.push({
@@ -64,18 +79,22 @@ export const dashboardController = {
       res.json({
         success: true,
         data: {
-          totalMedicines,
-          lowStockMedicines: lowStock,
-          totalSuppliers,
-          totalBatches,
-          expiringBatches,
-          pendingPrescriptions,
-          totalCustomers,
-          todayBillCount,
-          todayRevenue: Number(todayRevenue._sum.grandTotal || 0),
-          unresolvedNotifications,
-          pendingPOs,
-          totalInventoryLogs,
+          todaySales,
+          todayCashCollection: Number(todayCash._sum.cashPaid || 0),
+          todayUpiCollection: Number(todayUpi._sum.upiPaid || 0),
+          todayCreditAmount: todayCredit,
+          lowStockMedicines: lowStockRealCount,
+          warehouseStockSummary: whStockCount._sum.qty || 0,
+          rackStockSummary: rackStockCount._sum.qty || 0,
+          supplierPayableAmount: Number(supplierPayableAgg._sum.pendingAmount || 0),
+          customerReceivableAmount: Number(customerReceivableAgg._sum.outstandingBalance || 0),
+          urgentNotifications: urgentNotifs.map(n => ({
+            id: n.id,
+            type: n.type,
+            message: n.message,
+            time: n.createdAt ? new Date(n.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now',
+            resolved: n.resolved
+          })),
           salesChart
         }
       });

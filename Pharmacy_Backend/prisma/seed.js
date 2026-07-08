@@ -26,6 +26,33 @@ async function main() {
     console.log(`  ✓ Role: ${role.name}`);
   }
 
+  // ─── Medicine Statuses ──────────────────────────────────────────────────────
+  const statuses = ['Active', 'Inactive', 'Recovered', 'Blacklisted', 'Exported'];
+  for (const status of statuses) {
+    await prisma.medicineStatus.upsert({
+      where: { name: status },
+      update: {},
+      create: { name: status }
+    });
+    console.log(`  ✓ Status: ${status}`);
+  }
+
+  // ─── Medicine Types ─────────────────────────────────────────────────────────
+  const types = [
+    'Tablet', 'Syrup', 'Tonic', 'Ointment', 'Injection',
+    'Capsule', 'Drops', 'Cream', 'Consumable', 'Surgical Item'
+  ];
+  const createdTypes = {};
+  for (const t of types) {
+    const createdType = await prisma.medicineType.upsert({
+      where: { name: t },
+      update: {},
+      create: { name: t }
+    });
+    createdTypes[t] = createdType;
+    console.log(`  ✓ Type: ${t}`);
+  }
+
   // ─── Admin User ────────────────────────────────────────────────────────────
   const hashedPassword = await bcrypt.hash('Admin@2024', 10);
   const adminUser = await prisma.user.upsert({
@@ -103,6 +130,20 @@ async function main() {
   }
   console.log(`  ✓ ${racks.length} Racks seeded`);
 
+  // ─── Warehouses ────────────────────────────────────────────────────────────
+  const warehouses = [
+    { id: '00000000-0000-0000-0000-000000000001', name: 'Main Warehouse', code: 'WH-MAIN', storageCapacity: 10000, status: 'Active', type: 'Central' },
+    { id: '00000000-0000-0000-0000-000000000002', name: 'Branch Warehouse 1', code: 'WH-BR1', storageCapacity: 5000, status: 'Active', type: 'Branch' }
+  ];
+  for (const wh of warehouses) {
+    await prisma.warehouse.upsert({
+      where: { id: wh.id },
+      update: {},
+      create: wh
+    });
+  }
+  console.log(`  ✓ ${warehouses.length} Warehouses seeded`);
+
   // ─── Suppliers ─────────────────────────────────────────────────────────────
   const suppliers = [
     { name: 'Acme Pharma', code: 'SUP-ACME', gstNumber: '29AAACA1234A1Z1', email: 'acme@pharma.com', phone: '+91 99999 88888', gstType: 'Regular' },
@@ -138,6 +179,7 @@ async function main() {
       pricePerPiece: 2.50,
       taxPercentage: 12.00,
       categoryId: analgesicCat?.id,
+      typeId: createdTypes['Tablet']?.id,
       manufacturerId: gskMfr?.id,
       supplierId: createdSuppliers['Acme Pharma']?.id,
       stockQuantity: 1500,
@@ -151,6 +193,7 @@ async function main() {
       pricePerPiece: 1.80,
       taxPercentage: 12.00,
       categoryId: antacidCat?.id,
+      typeId: createdTypes['Tablet']?.id,
       manufacturerId: alkemMfr?.id,
       supplierId: createdSuppliers['Medlife Distributors']?.id,
       stockQuantity: 800,
@@ -164,6 +207,7 @@ async function main() {
       pricePerPiece: 5.00,
       taxPercentage: 18.00,
       categoryId: analgesicCat?.id,
+      typeId: createdTypes['Tablet']?.id,
       manufacturerId: gskMfr?.id,
       supplierId: createdSuppliers['BioTech Labs']?.id,
       stockQuantity: 1200,
@@ -177,6 +221,7 @@ async function main() {
       pricePerPiece: 8.50,
       taxPercentage: 12.00,
       categoryId: antibioticCat?.id,
+      typeId: createdTypes['Capsule']?.id,
       manufacturerId: alkemMfr?.id,
       supplierId: createdSuppliers['Acme Pharma']?.id,
       stockQuantity: 50,
@@ -190,6 +235,7 @@ async function main() {
       pricePerPiece: 1.50,
       taxPercentage: 12.00,
       categoryId: analgesicCat?.id,
+      typeId: createdTypes['Tablet']?.id,
       manufacturerId: gskMfr?.id,
       supplierId: createdSuppliers['Medlife Distributors']?.id,
       stockQuantity: 2000,
@@ -205,6 +251,45 @@ async function main() {
     });
   }
   console.log(`  ✓ ${medicinesToSeed.length} Medicines seeded`);
+
+  // ─── Warehouse Stocks ──────────────────────────────────────────────────────
+  const dbMeds = await prisma.medicine.findMany();
+  for (const med of dbMeds) {
+    // Upsert a default stock in the Main Warehouse for each medicine
+    await prisma.warehouseStock.upsert({
+      where: {
+        warehouseId_medicineId_batchNumber: {
+          warehouseId: '00000000-0000-0000-0000-000000000001',
+          medicineId: med.id,
+          batchNumber: 'B-LOT-99'
+        }
+      },
+      update: {},
+      create: {
+        warehouseId: '00000000-0000-0000-0000-000000000001',
+        medicineId: med.id,
+        batchNumber: 'B-LOT-99',
+        qty: med.stockQuantity > 0 ? Math.floor(med.stockQuantity * 0.4) : 200,
+        locationBin: 'Bin A-1'
+      }
+    });
+
+    // Let's sync the inventory record
+    await prisma.inventory.upsert({
+      where: { medicineId: med.id },
+      update: {
+        warehouseStock: med.stockQuantity > 0 ? Math.floor(med.stockQuantity * 0.4) : 200,
+        totalStock: med.stockQuantity
+      },
+      create: {
+        medicineId: med.id,
+        warehouseStock: med.stockQuantity > 0 ? Math.floor(med.stockQuantity * 0.4) : 200,
+        rackStock: 0,
+        totalStock: med.stockQuantity
+      }
+    });
+  }
+  console.log('  ✓ Warehouse Stock initialized');
 
   console.log('\n✅ Seeding complete!');
   console.log('   Login with: admin@hcare.com / Admin@2024');

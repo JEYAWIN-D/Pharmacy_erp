@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useDB } from '../../db/DBContext';
+import { dashboardAPI } from '../../db/api';
 
 export function useDashboardController(role) {
   const db = useDB();
@@ -17,24 +18,81 @@ export function useDashboardController(role) {
     setNotifications
   } = db;
 
-  const [activePoint, setActivePoint] = useState(null);
+  // Date filter state: 'today' | 'yesterday' | 'custom'
+  const [dateFilter, setDateFilter] = useState('today');
+  const [customDate, setCustomDate] = useState(() => new Date().toISOString().split('T')[0]);
 
-  const chartData = [
-    { day: 'Jun 01', inbound: 12000, outbound: 8000 },
-    { day: 'Jun 02', inbound: 15000, outbound: 11000 },
-    { day: 'Jun 03', inbound: 19000, outbound: 14000 },
-    { day: 'Jun 04', inbound: 22000, outbound: 18000 },
-    { day: 'Jun 05', inbound: 20000, outbound: 21000 },
-    { day: 'Jun 06', inbound: 18000, outbound: 24000 },
-    { day: 'Jun 07', inbound: 21000, outbound: 23000 },
-    { day: 'Jun 08', inbound: 25000, outbound: 20000 },
-    { day: 'Jun 09', inbound: 30000, outbound: 19000 },
-    { day: 'Jun 10', inbound: 28000, outbound: 22000 },
-    { day: 'Jun 11', inbound: 32000, outbound: 26000 },
-    { day: 'Jun 12', inbound: 35000, outbound: 31000 },
-    { day: 'Jun 13', inbound: 33000, outbound: 38000 },
-    { day: 'Jun 14', inbound: 42000, outbound: 45000 }
-  ];
+  const [stats, setStats] = useState({
+    totalSalesToday: 0,
+    todayCollectionsCash: 0,
+    todayCollectionsUPI: 0,
+    creditSalesToday: 0,
+    lowStockAlertsCount: 0,
+    lowStockItems: [],
+    totalWarehouseStock: 0,
+    totalRackStock: 0,
+    totalSupplierPayable: 0,
+    customerReceivable: 0,
+    urgentNotifications: [],
+    salesChart: [],
+    totalBillsCount: 0,
+  });
+
+  const [loadingStats, setLoadingStats] = useState(true);
+
+  const fetchStats = async () => {
+    try {
+      setLoadingStats(true);
+      const res = await dashboardAPI.getStats();
+      if (res.success && res.data) {
+        setStats({
+          totalSalesToday:         Number(res.data.todaySales ?? 0),
+          todayCollectionsCash:    Number(res.data.todayCashCollection ?? 0),
+          todayCollectionsUPI:     Number(res.data.todayUpiCollection ?? 0),
+          creditSalesToday:        Number(res.data.todayCreditAmount ?? 0),
+          lowStockAlertsCount:     res.data.lowStockMedicines ?? 0,
+          lowStockItems:           res.data.lowStockItems || [],
+          totalWarehouseStock:     res.data.warehouseStockSummary ?? 0,
+          totalRackStock:          res.data.rackStockSummary ?? 0,
+          totalSupplierPayable:    Number(res.data.supplierPayableAmount ?? 0),
+          customerReceivable:      Number(res.data.customerReceivableAmount ?? 0),
+          urgentNotifications:     res.data.urgentNotifications || [],
+          salesChart:              res.data.salesChart || [],
+          totalBillsCount:         0,
+        });
+      }
+    } catch (err) {
+      console.error('Failed to fetch dashboard stats:', err);
+    } finally {
+      setLoadingStats(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchStats();
+  }, [salesHistory, warehouseStock]);
+
+  // Compute filtered sales based on dateFilter
+  const getFilteredSales = () => {
+    if (!Array.isArray(salesHistory)) return [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    return salesHistory.filter(s => {
+      const sDate = new Date(s.createdAt || s.date);
+      sDate.setHours(0, 0, 0, 0);
+      if (dateFilter === 'today') return sDate.getTime() === today.getTime();
+      if (dateFilter === 'yesterday') return sDate.getTime() === yesterday.getTime();
+      if (dateFilter === 'custom') {
+        const cd = new Date(customDate);
+        cd.setHours(0, 0, 0, 0);
+        return sDate.getTime() === cd.getTime();
+      }
+      return true;
+    });
+  };
 
   const handleRackReallocationSimulation = () => {
     const updatedRacks = racks.map(rack => {
@@ -42,7 +100,6 @@ export function useDashboardController(role) {
       return rack;
     });
     setRacks(updatedRacks);
-    
     const newAlert = {
       id: Date.now(),
       type: 'warning',
@@ -63,9 +120,15 @@ export function useDashboardController(role) {
     prescriptions,
     warehouseStock,
     notifications,
-    activePoint,
-    setActivePoint,
-    chartData,
-    handleRackReallocationSimulation
+    handleRackReallocationSimulation,
+    stats,
+    loadingStats,
+    refetchStats: fetchStats,
+    // Date filter
+    dateFilter,
+    setDateFilter,
+    customDate,
+    setCustomDate,
+    getFilteredSales,
   };
 }

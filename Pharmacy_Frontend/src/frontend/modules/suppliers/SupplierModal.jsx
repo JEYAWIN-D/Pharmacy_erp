@@ -12,6 +12,8 @@ import StatCard from './components/StatCard';
 import DataTable from './components/DataTable';
 import ConfirmDialog from './components/ConfirmDialog';
 import FileUpload from './components/FileUpload';
+import { useDB } from '../../db/DBContext';
+import { suppliersAPI } from '../../db/api';
 
 // ── Shared input classes ──────────────────────────────────────────────────────
 const inp = 'w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-slate-700';
@@ -116,7 +118,7 @@ function TabOverview({ supplier, controller }) {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard icon={FileText} label="Total Purchase" value={`₹${financial.totalPurchase.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} color="blue" subValue={`${financial.invoiceCount} invoices`} />
         <StatCard icon={CreditCard} label="Total Paid" value={`₹${financial.totalPaid.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} color="emerald" subValue={`${financial.paymentCount} payments`} />
-        <StatCard icon={AlertCircle} label="Outstanding" value={`₹${financial.outstanding.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} color="rose" />
+        <StatCard icon={AlertCircle} label="Pending Payment" value={`₹${financial.outstanding.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`} color="rose" />
         <StatCard icon={Gauge} label="Credit Used" value={`${financial.utilization}%`} color={financial.utilization < 60 ? 'emerald' : financial.utilization < 80 ? 'amber' : 'rose'} subValue={`of ₹${financial.creditLimit.toLocaleString()}`} />
       </div>
 
@@ -134,7 +136,7 @@ function TabOverview({ supplier, controller }) {
         </div>
         <div className="grid grid-cols-3 gap-4 text-xs font-mono">
           <div><span className="text-[9px] text-slate-400 font-sans font-bold block">Credit Limit</span>₹{financial.creditLimit.toLocaleString()}</div>
-          <div><span className="text-[9px] text-slate-400 font-sans font-bold block">Outstanding</span>₹{financial.outstanding.toFixed(0)}</div>
+          <div><span className="text-[9px] text-slate-400 font-sans font-bold block">Pending Payment</span>₹{financial.outstanding.toFixed(0)}</div>
           <div><span className="text-[9px] text-slate-400 font-sans font-bold block">Available</span><span className="text-emerald-600">₹{Math.max(0, financial.creditLimit - financial.outstanding).toFixed(0)}</span></div>
         </div>
         {financial.utilization > 80 && (
@@ -210,32 +212,38 @@ function TabMapping({ supplier, controller, addToast }) {
   };
 
   // — Medicine section —
+  const { supplierMappings, refetch } = useDB();
   const [showMedForm, setShowMedForm] = useState(false);
-  const [medForm, setMedForm] = useState({ medicineId: '' });
+  const [medForm, setMedForm] = useState({ medicineId: '', purchasePrice: '', leadTimeDays: '3', minOrderQty: '1', isDefault: false });
   const [confirmDeleteMed, setConfirmDeleteMed] = useState(null);
 
-  const supplierMeds = brandMappings.filter(b => b.supplierId === supplierId && b.medicineId);
+  const supplierMeds = supplierMappings.filter(m => m.supplierId === supplierId);
 
   const handleSaveMed = async (e) => {
     e.preventDefault();
     if (!medForm.medicineId) return addToast('Select a medicine', 'error');
-    const m = medicinesList.find(x => x.id === medForm.medicineId);
     try {
-      await createBrandMapping({
-        supplierId, medicineId: m.id, medicineName: m.name,
-        brandName: m.brand || 'Generic', genericName: m.generic, manufacturer: m.manufacturer
+      await suppliersAPI.createMedicineMapping({
+        supplierId,
+        medicineId: medForm.medicineId,
+        purchasePrice: parseFloat(medForm.purchasePrice) || 0,
+        leadTimeDays: parseInt(medForm.leadTimeDays) || 3,
+        minOrderQty: parseInt(medForm.minOrderQty) || 1,
+        isDefault: !!medForm.isDefault
       });
-      addToast('Medicine mapped', 'success');
+      addToast('Medicine mapped successfully', 'success');
       setShowMedForm(false);
-      setMedForm({ medicineId: '' });
-    } catch { addToast('Failed to map medicine', 'error'); }
+      setMedForm({ medicineId: '', purchasePrice: '', leadTimeDays: '3', minOrderQty: '1', isDefault: false });
+      refetch();
+    } catch (err) { addToast(err?.message || 'Failed to map medicine', 'error'); }
   };
 
   const handleDeleteMed = async () => {
     try {
-      await deleteBrandMapping(confirmDeleteMed.id);
+      await suppliersAPI.deleteMedicineMapping(confirmDeleteMed.id);
       addToast('Mapping removed', 'success');
-    } catch { addToast('Failed to remove', 'error'); }
+      refetch();
+    } catch { addToast('Failed to remove mapping', 'error'); }
     setConfirmDeleteMed(null);
   };
 
@@ -342,25 +350,51 @@ function TabMapping({ supplier, controller, addToast }) {
             </button>
           </div>
           {showMedForm && (
-            <form onSubmit={handleSaveMed} className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-wrap items-end gap-3">
-              <div className="flex-1 min-w-[200px]">
-                <label className={lbl}>Select Medicine *</label>
-                <select required value={medForm.medicineId} onChange={e => setMedForm({ medicineId: e.target.value })} className={inp}>
-                  <option value="">Select Medicine</option>
-                  {medicinesList.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                </select>
+            <form onSubmit={handleSaveMed} className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3 text-left">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className={lbl}>Select Medicine *</label>
+                  <select required value={medForm.medicineId} onChange={e => setMedForm({ ...medForm, medicineId: e.target.value })} className={inp}>
+                    <option value="">Select Medicine</option>
+                    {medicinesList.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={lbl}>Purchase Price (₹) *</label>
+                  <input required type="number" step="0.01" value={medForm.purchasePrice} onChange={e => setMedForm({ ...medForm, purchasePrice: e.target.value })} placeholder="0.00" className={inp} />
+                </div>
+                <div>
+                  <label className={lbl}>Lead Time (Days)</label>
+                  <input type="number" value={medForm.leadTimeDays} onChange={e => setMedForm({ ...medForm, leadTimeDays: e.target.value })} placeholder="3" className={inp} />
+                </div>
               </div>
-              <button type="submit" className="flex items-center gap-1 px-3 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-[10px] font-bold transition cursor-pointer">
-                <Save size={11} /> Save
-              </button>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-center">
+                <div>
+                  <label className={lbl}>Minimum Order Quantity (MOQ)</label>
+                  <input type="number" value={medForm.minOrderQty} onChange={e => setMedForm({ ...medForm, minOrderQty: e.target.value })} placeholder="1" className={inp} />
+                </div>
+                <div className="flex items-center gap-2 pt-4">
+                  <input type="checkbox" id="med-default" checked={medForm.isDefault} onChange={e => setMedForm({ ...medForm, isDefault: e.target.checked })} className="rounded accent-blue-600 cursor-pointer h-4 w-4" />
+                  <label htmlFor="med-default" className="text-xs font-bold text-slate-500 cursor-pointer select-none">Set as Default Supplier for this Medicine</label>
+                </div>
+              </div>
+              <div className="flex justify-end">
+                <button type="submit" className="flex items-center gap-1 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-[10px] font-bold transition cursor-pointer">
+                  <Save size={11} /> Save Mapping
+                </button>
+              </div>
             </form>
           )}
           <DataTable columns={[
-            { key: 'medicine', header: 'Medicine', accessor: 'medicineName', render: r => <span className="font-semibold text-blue-600">{r.medicineName}</span> },
-            { key: 'brand', header: 'Brand', accessor: 'brandName', render: r => <span className="text-slate-600">{r.brandName || '—'}</span> },
+            { key: 'medicine', header: 'Medicine Name', render: r => <span className="font-semibold text-blue-600">{r.medicine?.medicineName || r.medicine?.name || 'Unknown'}</span> },
+            { key: 'price', header: 'Purchase Price', align: 'right', render: r => <span className="font-mono font-bold text-slate-700">₹{parseFloat(r.purchasePrice || 0).toFixed(2)}</span> },
+            { key: 'leadTime', header: 'Lead Time', align: 'center', render: r => <span className="font-mono text-slate-600">{r.leadTimeDays || 3} days</span> },
+            { key: 'moq', header: 'MOQ', align: 'center', render: r => <span className="font-mono text-slate-600">{r.minOrderQty || 1} units</span> },
+            { key: 'default', header: 'Default Supplier', align: 'center', render: r => <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${r.isDefault ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-slate-100 text-slate-500'}`}>{r.isDefault ? 'Yes' : 'No'}</span> },
+            { key: 'status', header: 'Status', align: 'center', render: r => <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${r.status === 'Active' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500'}`}>{r.status || 'Active'}</span> },
             { key: 'actions', header: '', sortable: false, render: r => <button onClick={() => setConfirmDeleteMed(r)} className="p-1 hover:bg-rose-50 rounded text-rose-500 cursor-pointer"><Trash2 size={12} /></button> }
-          ]} data={supplierMeds} searchPlaceholder="Search medicines..." pageSize={8} />
-          <ConfirmDialog isOpen={!!confirmDeleteMed} title="Remove Mapping" message={`Remove mapping for ${confirmDeleteMed?.medicineName}?`} onConfirm={handleDeleteMed} onCancel={() => setConfirmDeleteMed(null)} />
+          ]} data={supplierMeds} searchPlaceholder="Search mapped medicines..." pageSize={8} />
+          <ConfirmDialog isOpen={!!confirmDeleteMed} title="Remove Mapping" message={`Remove mapping for ${confirmDeleteMed?.medicine?.medicineName || confirmDeleteMed?.medicine?.name}?`} onConfirm={handleDeleteMed} onCancel={() => setConfirmDeleteMed(null)} />
         </div>
       )}
     </div>
@@ -1333,6 +1367,73 @@ function TabMedicinesSupplied({ supplier, controller }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// TAB 8 — PURCHASE HISTORY (Invoices / GRNs & Purchase Orders)
+// ══════════════════════════════════════════════════════════════════════════════
+function TabPurchaseHistory({ supplier, controller }) {
+  const [viewMode, setViewMode] = useState('invoices'); // 'invoices' or 'pos'
+  const { invoices, purchaseOrders } = controller;
+
+  const supplierInvoices = useMemo(() => {
+    return invoices.filter(i => i.supplierId === supplier.id);
+  }, [invoices, supplier]);
+
+  const supplierPOs = useMemo(() => {
+    return purchaseOrders.filter(p => p.supplierId === supplier.id);
+  }, [purchaseOrders, supplier]);
+
+  const invColumns = [
+    { key: 'date', header: 'Date', render: (row) => <span className="text-[10px] text-slate-500">{new Date(row.date || row.createdAt).toLocaleDateString()}</span> },
+    { key: 'invNum', header: 'Invoice No / GRN', render: (row) => <span className="font-mono font-bold text-slate-700">{row.invoiceNumber || `GRN-${row.id.toString().slice(-6).toUpperCase()}`}</span> },
+    { key: 'amount', header: 'Amount', align: 'right', render: (row) => <span className="font-mono font-bold text-slate-700">₹{parseFloat(row.amount || 0).toFixed(2)}</span> },
+    { key: 'status', header: 'Status', render: (row) => {
+      const colors = {
+        'Paid': 'bg-emerald-50 text-emerald-700 border border-emerald-200',
+        'Unpaid': 'bg-rose-50 text-rose-700 border border-rose-200',
+        'Partially Paid': 'bg-amber-50 text-amber-700 border border-amber-200'
+      };
+      const color = colors[row.status] || 'bg-slate-50 text-slate-700';
+      return <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${color}`}>{row.status || 'Unpaid'}</span>;
+    }}
+  ];
+
+  const poColumns = [
+    { key: 'date', header: 'Order Date', render: (row) => <span className="text-[10px] text-slate-500">{new Date(row.orderDate || row.createdAt).toLocaleDateString()}</span> },
+    { key: 'poNum', header: 'PO Number', render: (row) => <span className="font-mono font-bold text-slate-700">{row.poNumber || `PO-${row.id.toString().slice(-6).toUpperCase()}`}</span> },
+    { key: 'total', header: 'Total Value', align: 'right', render: (row) => <span className="font-mono font-bold text-slate-700">₹{parseFloat(row.total || 0).toFixed(2)}</span> },
+    { key: 'status', header: 'Status', render: (row) => {
+      const colors = {
+        'Completed': 'bg-emerald-50 text-emerald-700 border border-emerald-200',
+        'Pending': 'bg-amber-50 text-amber-700 border border-amber-200',
+        'Draft': 'bg-slate-100 text-slate-500 border border-slate-200',
+        'Cancelled': 'bg-rose-50 text-rose-700 border border-rose-200'
+      };
+      const color = colors[row.status] || 'bg-slate-50 text-slate-700';
+      return <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${color}`}>{row.status || 'Draft'}</span>;
+    }}
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+          <button onClick={() => setViewMode('invoices')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${viewMode === 'invoices' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Invoices (GRN)</button>
+          <button onClick={() => setViewMode('pos')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${viewMode === 'pos' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Purchase Orders</button>
+        </div>
+        <span className="text-[10px] text-slate-400 font-bold uppercase">
+          {viewMode === 'invoices' ? `${supplierInvoices.length} Invoices` : `${supplierPOs.length} POs`}
+        </span>
+      </div>
+
+      {viewMode === 'invoices' ? (
+        <DataTable columns={invColumns} data={supplierInvoices} searchPlaceholder="Search invoices..." pageSize={8} />
+      ) : (
+        <DataTable columns={poColumns} data={supplierPOs} searchPlaceholder="Search POs..." pageSize={8} />
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // MAIN SUPPLIER MODAL COMPONENT
 // ══════════════════════════════════════════════════════════════════════════════
 const TABS = [
@@ -1340,6 +1441,7 @@ const TABS = [
   { id: 'medicines-supplied', label: '💊 Medicines Supplied' },
   { id: 'mapping', label: 'Mapping' },
   { id: 'purchase-terms', label: 'Purchase Terms' },
+  { id: 'purchase-history', label: '🛒 Purchase History' },
   { id: 'financials', label: 'Financials' },
   { id: 'ledger', label: 'Ledger' },
   { id: 'docs-performance', label: 'Docs & Performance' },
@@ -1356,6 +1458,7 @@ export default function SupplierModal({ supplier, controller, onClose, addToast 
       case 'medicines-supplied': return <TabMedicinesSupplied supplier={supplier} controller={controller} />;
       case 'mapping': return <TabMapping supplier={supplier} controller={controller} addToast={addToast} />;
       case 'purchase-terms': return <TabPurchaseTerms supplier={supplier} controller={controller} addToast={addToast} />;
+      case 'purchase-history': return <TabPurchaseHistory supplier={supplier} controller={controller} />;
       case 'financials': return <TabFinancials supplier={supplier} controller={controller} addToast={addToast} />;
       case 'ledger': return <TabLedger supplier={supplier} controller={controller} />;
       case 'docs-performance': return <TabDocsPerformance supplier={supplier} controller={controller} addToast={addToast} />;

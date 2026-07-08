@@ -1,9 +1,55 @@
-import React, { useMemo } from 'react';
-import { ArrowLeft, Phone, Mail, Globe, MapPin, Shield, FileText, CreditCard, Gauge, HelpCircle, AlertCircle } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { ArrowLeft, Phone, Mail, Globe, MapPin, Shield, FileText, CreditCard, Gauge, HelpCircle, AlertCircle, Package, Plus, Trash2 } from 'lucide-react';
 import StatCard from './components/StatCard';
 
 export default function SupplierDetails({ supplier, controller, addToast, onBack }) {
   const { invoices, payments, returns, creditNotes, ledger } = controller;
+
+  const [selectedMedId, setSelectedMedId] = useState('');
+  const [mappingPrice, setMappingPrice] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const supplierMeds = useMemo(() => {
+    return (controller.medicineMappings || []).filter(m => m.supplierId === supplier.id);
+  }, [supplier.id, controller.medicineMappings]);
+
+  const unmappedMeds = useMemo(() => {
+    const mappedIds = new Set(supplierMeds.map(m => m.medicineId));
+    return (controller.medicinesList || []).filter(m => !mappedIds.has(m.id));
+  }, [controller.medicinesList, supplierMeds]);
+
+  const handleAddMapping = async (e) => {
+    e.preventDefault();
+    if (!selectedMedId) return addToast('Please select a medicine', 'error');
+    if (!mappingPrice || parseFloat(mappingPrice) <= 0) return addToast('Please enter a valid purchase price', 'error');
+    
+    setIsSubmitting(true);
+    try {
+      await controller.createMedicineMapping({
+        supplierId: supplier.id,
+        medicineId: selectedMedId,
+        purchasePrice: parseFloat(mappingPrice),
+        isDefault: false
+      });
+      addToast('Medicine mapped successfully', 'success');
+      setSelectedMedId('');
+      setMappingPrice('');
+    } catch (err) {
+      addToast(err.message || 'Failed to map medicine', 'error');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRemoveMapping = async (mappingId) => {
+    if (!window.confirm('Are you sure you want to remove this medicine mapping?')) return;
+    try {
+      await controller.deleteMedicineMapping(mappingId);
+      addToast('Medicine mapping removed successfully', 'success');
+    } catch (err) {
+      addToast('Failed to remove mapping', 'error');
+    }
+  };
 
   const financial = useMemo(() => {
     const sInv = invoices.filter(i => i.supplierId === supplier.id);
@@ -62,7 +108,7 @@ export default function SupplierDetails({ supplier, controller, addToast, onBack
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard icon={FileText} label="Total Purchase" value={`₹${financial.totalPurchase.toFixed(0)}`} color="blue" subValue={`${financial.invoiceCount} invoices`} />
         <StatCard icon={CreditCard} label="Total Paid" value={`₹${financial.totalPaid.toFixed(0)}`} color="emerald" subValue={`${financial.paymentCount} payments`} />
-        <StatCard icon={AlertCircle} label="Outstanding" value={`₹${financial.outstanding.toFixed(0)}`} color="rose" />
+        <StatCard icon={AlertCircle} label="Pending Payment" value={`₹${financial.outstanding.toFixed(0)}`} color="rose" />
         <StatCard icon={Gauge} label="Credit Used" value={`${financial.utilization}%`} color={financial.utilization < 60 ? 'emerald' : financial.utilization < 80 ? 'amber' : 'rose'} subValue={`of ₹${financial.creditLimit.toLocaleString()}`} />
       </div>
 
@@ -80,7 +126,7 @@ export default function SupplierDetails({ supplier, controller, addToast, onBack
         </div>
         <div className="grid grid-cols-3 gap-4 text-xs font-mono">
           <div><span className="text-[9px] text-slate-400 font-sans font-bold block">Credit Limit</span>₹{financial.creditLimit.toLocaleString()}</div>
-          <div><span className="text-[9px] text-slate-400 font-sans font-bold block">Outstanding</span>₹{financial.outstanding.toFixed(0)}</div>
+          <div><span className="text-[9px] text-slate-400 font-sans font-bold block">Pending Payment</span>₹{financial.outstanding.toFixed(0)}</div>
           <div><span className="text-[9px] text-slate-400 font-sans font-bold block">Available</span><span className="text-emerald-600">₹{Math.max(0, financial.creditLimit - financial.outstanding).toFixed(0)}</span></div>
         </div>
         {financial.utilization > 80 && (
@@ -88,6 +134,99 @@ export default function SupplierDetails({ supplier, controller, addToast, onBack
             <AlertCircle size={14} /> Credit limit nearing capacity. New procurement may be restricted.
           </div>
         )}
+      </div>
+
+      {/* List of Medicines & Mapping Section */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-extrabold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+            <Package size={14} className="text-blue-600" /> Supplied Medicines ({supplierMeds.length})
+          </h3>
+        </div>
+
+        {/* Map new medicine form */}
+        <form onSubmit={handleAddMapping} className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl items-end">
+          <div>
+            <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Select Medicine *</label>
+            <select
+              value={selectedMedId}
+              onChange={e => setSelectedMedId(e.target.value)}
+              className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs"
+              required
+            >
+              <option value="">-- Choose Medicine --</option>
+              {unmappedMeds.map(m => (
+                <option key={m.id} value={m.id}>{m.medicineName || m.name} ({m.skuCode || m.sku})</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Purchase Price (₹) *</label>
+            <input
+              type="number"
+              step="0.01"
+              placeholder="0.00"
+              value={mappingPrice}
+              onChange={e => setMappingPrice(e.target.value)}
+              className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs"
+              required
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={isSubmitting || !selectedMedId}
+            className="flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-lg text-xs font-bold transition shadow cursor-pointer w-full"
+          >
+            <Plus size={14} /> Map Medicine
+          </button>
+        </form>
+
+        {/* Mapped medicines table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="border-b border-slate-100 text-slate-400 font-bold uppercase text-[9px]">
+                <th className="py-2 pr-3">Medicine Name</th>
+                <th className="py-2">SKU / Code</th>
+                <th className="py-2 text-right">Purchase Price (₹)</th>
+                <th className="py-2 text-center">Status</th>
+                <th className="py-2 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {supplierMeds.length > 0 ? (
+                supplierMeds.map(m => (
+                  <tr key={m.id} className="border-b border-slate-50 hover:bg-slate-50/50">
+                    <td className="py-2.5 font-semibold text-slate-800">{m.medicine?.medicineName || m.medicine?.name || 'N/A'}</td>
+                    <td className="py-2.5 font-mono text-slate-500">{m.medicine?.skuCode || m.medicine?.sku || 'N/A'}</td>
+                    <td className="py-2.5 text-right font-mono text-slate-700">₹{parseFloat(m.purchasePrice).toFixed(2)}</td>
+                    <td className="py-2.5 text-center">
+                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${m.status === 'Active' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                        {m.status}
+                      </span>
+                    </td>
+                    <td className="py-2.5 text-right">
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveMapping(m.id)}
+                        className="p-1 hover:bg-red-50 text-red-500 hover:text-red-700 rounded transition cursor-pointer"
+                        title="Remove mapping"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan="5" className="py-8 text-center text-slate-400 font-semibold">
+                    No medicines mapped to this supplier yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

@@ -22,4 +22,9 @@ router.post('/supplier-payments', administrationController.createSupplierPayment
 router.get('/supplier-ledger', administrationController.getSupplierLedger);
 router.post('/supplier-ledger', administrationController.createSupplierLedger);
 
+// Finance Supplier Payments
+router.get('/finance-payments', administrationController.getFinancePayments);
+router.post('/finance-payments/pay', administrationController.payFinanceInvoice);
+router.get('/finance-payments/reports', administrationController.getFinanceReports);
+
 export default router;

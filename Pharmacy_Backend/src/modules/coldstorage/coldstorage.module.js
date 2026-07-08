@@ -33,5 +33,47 @@ export const coldStorageController = {
       const d = await prisma.coldStorageLog.findFirst({ orderBy: { recordedAt: 'desc' } });
       res.json({ success: true, data: d || { temperature: 4.2, status: 'Normal' } });
     } catch (e) { next(e); }
+  },
+  getStock: async (req, res, next) => {
+    try {
+      const records = await prisma.coldStorage.findMany({
+        include: {
+          medicine: {
+            include: {
+              category: { select: { name: true } },
+              batches: {
+                where: { isDeleted: false, status: 'Active' },
+                orderBy: { expiryDate: 'asc' }
+              }
+            }
+          },
+          batch: true
+        }
+      });
+      res.json({ success: true, data: records });
+    } catch (e) { next(e); }
+  },
+  updateStockRecord: async (req, res, next) => {
+    try {
+      const { requiredTemperature, storagePlace, rackFridgeLocation, currentTemperature, status } = req.body;
+      const id = req.params.id;
+
+      const record = await prisma.coldStorage.findUnique({ where: { id } });
+      if (!record) throw new Error('Cold Storage record not found');
+
+      const data = {};
+      if (requiredTemperature !== undefined) data.requiredTemperature = requiredTemperature;
+      if (storagePlace !== undefined) data.storagePlace = storagePlace;
+      if (rackFridgeLocation !== undefined) data.rackFridgeLocation = rackFridgeLocation;
+      if (currentTemperature !== undefined) data.currentTemperature = parseFloat(currentTemperature);
+      if (status !== undefined) data.status = status;
+
+      const updated = await prisma.coldStorage.update({
+        where: { id },
+        data,
+        include: { medicine: true, batch: true }
+      });
+      res.json({ success: true, data: updated });
+    } catch (e) { next(e); }
   }
 };

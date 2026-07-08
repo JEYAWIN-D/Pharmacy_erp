@@ -405,5 +405,34 @@ export const supplierController = {
 
       res.json({ success: true, data: reportData });
     } catch (err) { next(err); }
+  },
+
+  getMedicineMappings: async (req, res, next) => {
+    try {
+      const { supplierId, medicineId } = req.query;
+      const data = await supplierService.getMedicineMappings({ supplierId, medicineId });
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+
+  createMedicineMapping: async (req, res, next) => {
+    try {
+      const data = await supplierService.createMedicineMapping(req.body);
+      res.status(201).json({ success: true, data, message: 'Medicine supplier mapping created successfully' });
+    } catch (err) { next(err); }
+  },
+
+  updateMedicineMapping: async (req, res, next) => {
+    try {
+      const data = await supplierService.updateMedicineMapping(req.params.id, req.body);
+      res.json({ success: true, data, message: 'Medicine supplier mapping updated successfully' });
+    } catch (err) { next(err); }
+  },
+
+  deleteMedicineMapping: async (req, res, next) => {
+    try {
+      await supplierService.deleteMedicineMapping(req.params.id);
+      res.json({ success: true, message: 'Medicine supplier mapping deleted successfully' });
+    } catch (err) { next(err); }
   }
 };

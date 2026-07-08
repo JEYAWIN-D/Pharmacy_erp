@@ -282,6 +282,68 @@ export default function RackView({ role, setSchemaModalTable }) {
             </div>
           </div>
 
+          {/* Rack Capacity & Occupancy Report Table */}
+          <div className="bg-white border border-slate-200 p-6 rounded-[28px] space-y-4 shadow-sm text-left">
+            <div>
+              <h4 className="text-xs font-black uppercase text-slate-700 tracking-wider flex items-center gap-2">
+                <Database size={15} className="text-blue-600" />
+                Rack Capacity & Occupancy Report
+              </h4>
+              <p className="text-[10px] text-slate-400 mt-1">Real-time breakdown of all main racks, compartment counts, total physical capacities, and utilization rates.</p>
+            </div>
+
+            <div className="overflow-x-auto border border-slate-100 rounded-2xl">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 text-slate-400 font-bold uppercase text-[9px] border-b border-slate-200/50">
+                    <th className="py-3 px-4">Rack Name</th>
+                    <th className="py-3 px-4">Rack Code</th>
+                    <th className="py-3 px-4">Storage Category</th>
+                    <th className="py-3 px-4 text-center">Sub-Racks Count</th>
+                    <th className="py-3 px-4 text-center">Used Space (Boxes)</th>
+                    <th className="py-3 px-4 text-center">Max Capacity (Boxes)</th>
+                    <th className="py-3 px-4 text-center">Utilization</th>
+                    <th className="py-3 px-4 text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {racks.filter(r => r.id !== 'RACK-WH').map(rack => {
+                    const totalComp = compartments.filter(c => c.rackId === rack.id).length;
+                    const rackUsage = getRackUsage(rack.id);
+                    const rackCap = getRackTotalCapacity(rack.id);
+                    const percentUsed = rackCap > 0 ? Math.min(100, Math.round((rackUsage / rackCap) * 100)) : 0;
+                    
+                    return (
+                      <tr key={rack.id} className="border-b border-slate-100 hover:bg-slate-50/50 font-medium">
+                        <td className="py-3 px-4 font-bold text-slate-800">{rack.name}</td>
+                        <td className="py-3 px-4 font-mono font-bold text-slate-500">{rack.code || rack.id}</td>
+                        <td className="py-3 px-4 text-slate-600">{rack.category}</td>
+                        <td className="py-3 px-4 text-center font-bold text-slate-700">{totalComp}</td>
+                        <td className="py-3 px-4 text-center font-bold text-slate-700">{rackUsage}</td>
+                        <td className="py-3 px-4 text-center text-slate-400 font-bold">{rackCap}</td>
+                        <td className="py-3 px-4 text-center">
+                          <div className="flex items-center justify-center gap-2">
+                            <span className="font-mono font-bold text-slate-800">{percentUsed}%</span>
+                            <div className="w-12 bg-slate-100 rounded-full h-1.5 overflow-hidden border border-slate-200/40">
+                              <div className={`h-full rounded-full ${percentUsed > 80 ? 'bg-red-500' : percentUsed > 50 ? 'bg-amber-500' : 'bg-blue-600'}`} style={{ width: `${percentUsed}%` }} />
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                            rack.status === 'Active' ? 'bg-blue-50 text-blue-800' : 'bg-red-50 text-red-800'
+                          }`}>
+                            {rack.status}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
         </div>
       )}
 
@@ -411,10 +473,15 @@ export default function RackView({ role, setSchemaModalTable }) {
             {/* Action buttons */}
             <div className="flex flex-wrap items-center gap-2">
               <button
-                onClick={() => setActiveModal('add-medicine')}
+                onClick={() => {
+                  setXToRack(activeRack.id);
+                  setXToComp(activeCompartment.id);
+                  handleWHCompChange('COMP-WH1');
+                  setActiveModal('w2r');
+                }}
                 className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs uppercase flex items-center gap-1 shadow transition cursor-pointer"
               >
-                <Plus size={12} /> Add Medicine
+                <Plus size={12} /> Transfer from Warehouse
               </button>
               <button
                 onClick={() => setViewState('rack-detail')}
@@ -487,7 +554,7 @@ export default function RackView({ role, setSchemaModalTable }) {
 
               {activeCompartmentMeds.length === 0 ? (
                 <div className="p-8 text-center text-slate-400 text-xs italic font-medium bg-slate-50 border border-slate-100 rounded-2xl">
-                  No medicines currently allocated in this slot. Click "Add Medicine" above to stock it.
+                  No medicines currently allocated in this slot. Click "Transfer from Warehouse" above to stock it.
                 </div>
               ) : (
                 <div className="overflow-x-auto border border-slate-100 rounded-2xl">

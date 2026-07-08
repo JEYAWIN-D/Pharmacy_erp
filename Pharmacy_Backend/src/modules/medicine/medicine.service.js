@@ -41,6 +41,17 @@ const validateSupplierExists = async (supplierId) => {
 };
 
 /**
+ * Validates that a given typeId actually exists and is active.
+ */
+const validateTypeExists = async (typeId) => {
+  if (!typeId) return;
+  const mType = await prisma.medicineType.findFirst({ where: { id: typeId, isActive: true } });
+  if (!mType) {
+    throw new AppError('Medicine type not found or inactive', 404, 'TYPE_NOT_FOUND');
+  }
+};
+
+/**
  * Auto-generate an SKU code like MED-0001 if not provided.
  */
 const generateSkuCode = async () => {
@@ -64,7 +75,8 @@ export const medicineService = {
     await Promise.all([
       validateUniqueSku(data.skuCode),
       validateCategoryExists(data.categoryId),
-      validateSupplierExists(data.supplierId)
+      validateSupplierExists(data.supplierId),
+      validateTypeExists(data.typeId)
     ]);
 
     data.createdBy = userId;
@@ -90,6 +102,7 @@ export const medicineService = {
       search:     params.search,
       isActive:   isActiveParsed,
       categoryId: params.categoryId,
+      typeId:     params.typeId,
       sortBy,
       sortOrder,
       skip,
@@ -126,7 +139,8 @@ export const medicineService = {
     await Promise.all([
       validateUniqueSku(data.skuCode, id),
       validateCategoryExists(data.categoryId),
-      validateSupplierExists(data.supplierId)
+      validateSupplierExists(data.supplierId),
+      validateTypeExists(data.typeId)
     ]);
 
     data.updatedBy = userId;
@@ -153,5 +167,9 @@ export const medicineService = {
       isActive:  false,
       updatedBy: userId
     });
+  },
+
+  getStatuses: async () => {
+    return prisma.medicineStatus.findMany({ orderBy: { name: 'asc' } });
   }
 };

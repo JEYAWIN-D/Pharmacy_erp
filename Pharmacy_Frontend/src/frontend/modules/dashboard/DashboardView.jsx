@@ -1,9 +1,79 @@
 import React from 'react';
-import { 
-  BarChart3, AlertCircle, ShieldAlert, AlertTriangle, Package, ArrowRight
+import {
+  BarChart3, AlertCircle, ShieldAlert, AlertTriangle, Package, ArrowRight,
+  Wallet, CreditCard, Smartphone, TrendingUp, TrendingDown, Warehouse,
+  Layers, Building2, Bell, ClipboardList, Users, ShoppingCart,
+  CalendarDays, Activity, RefreshCw, ChevronRight
 } from 'lucide-react';
 import { useDashboardController } from './useDashboardController';
 
+// ─── Reusable Stat Card ────────────────────────────────────────────────────────
+function StatCard({ label, value, sub, accentColor = 'blue', icon: Icon, onClick, urgent, trend }) {
+  const colors = {
+    blue:   { bar: 'bg-blue-500',   text: 'text-blue-600',   hover: 'hover:border-blue-200',  badge: 'text-blue-500' },
+    green:  { bar: 'bg-emerald-500', text: 'text-emerald-600', hover: 'hover:border-emerald-200', badge: 'text-emerald-500' },
+    amber:  { bar: 'bg-amber-500',  text: 'text-amber-600',  hover: 'hover:border-amber-200', badge: 'text-amber-600' },
+    red:    { bar: 'bg-red-500',    text: 'text-red-600',    hover: 'hover:border-red-200',   badge: 'text-red-600' },
+    indigo: { bar: 'bg-indigo-500', text: 'text-indigo-600', hover: 'hover:border-indigo-200', badge: 'text-indigo-500' },
+    purple: { bar: 'bg-purple-500', text: 'text-purple-600', hover: 'hover:border-purple-200', badge: 'text-purple-500' },
+  };
+  const c = colors[accentColor] || colors.blue;
+
+  return (
+    <div
+      onClick={onClick}
+      className={`unique-card p-5 text-left relative overflow-hidden cursor-pointer hover:shadow-xl ${c.hover} hover:scale-[1.01] transition-all duration-300 group ${urgent ? 'border-l-4 border-l-red-500' : ''}`}
+    >
+      <div className={`absolute right-3 top-3 p-2 rounded-xl bg-slate-50 ${c.text}`}>
+        {Icon && <Icon size={16} />}
+      </div>
+      <div className={`w-1 h-8 ${c.bar} rounded-full absolute right-0 top-0 bottom-0 my-auto`} />
+      <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider pr-10">{label}</span>
+      <h3 className={`text-xl font-black mt-1 ${urgent ? 'text-red-600' : 'text-slate-800'}`}>{value}</h3>
+      {sub && <p className="text-[9px] text-slate-500 font-semibold mt-1">{sub}</p>}
+      {trend !== undefined && (
+        <div className={`flex items-center gap-1 text-[9px] font-bold mt-1 ${trend >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+          {trend >= 0 ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+          <span>{trend >= 0 ? '+' : ''}{trend}% vs yesterday</span>
+        </div>
+      )}
+      <div className={`flex items-center gap-1 text-[8px] font-extrabold ${c.badge} mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none`}>
+        <span>View Details</span>
+        <ChevronRight size={9} className="transform group-hover:translate-x-0.5 transition-transform duration-300" />
+      </div>
+    </div>
+  );
+}
+
+// ─── Section Header ────────────────────────────────────────────────────────────
+function SectionTitle({ icon: Icon, label, color = 'text-blue-600' }) {
+  return (
+    <div className={`flex items-center gap-2 text-xs font-black uppercase tracking-widest ${color} mb-3`}>
+      <Icon size={14} />
+      <span>{label}</span>
+    </div>
+  );
+}
+
+// ─── Mini Spark Bar ────────────────────────────────────────────────────────────
+function SalesSparkBar({ data }) {
+  if (!data || data.length === 0) return null;
+  const max = Math.max(...data.map(d => d.revenue), 1);
+  return (
+    <div className="flex items-end gap-1 h-10">
+      {data.map((d, i) => (
+        <div
+          key={i}
+          className="flex-1 bg-blue-500/20 hover:bg-blue-500/50 rounded-sm transition-all duration-200 cursor-pointer"
+          style={{ height: `${Math.max(4, (d.revenue / max) * 100)}%` }}
+          title={`${d.date}: ₹${d.revenue.toLocaleString()}`}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ─── Main Dashboard View ───────────────────────────────────────────────────────
 export default function DashboardView({ role, setActiveTab }) {
   const {
     salesHistory,
@@ -14,803 +84,522 @@ export default function DashboardView({ role, setActiveTab }) {
     prescriptions,
     warehouseStock,
     notifications,
-    handleRackReallocationSimulation
+    handleRackReallocationSimulation,
+    stats,
+    loadingStats,
+    refetchStats,
+    dateFilter,
+    setDateFilter,
+    customDate,
+    setCustomDate,
+    getFilteredSales,
   } = useDashboardController(role);
 
-  // Helper to switch report sub-tabs via localStorage
+  // Navigate to a specific report sub-tab
   const navigateToReport = (subtab) => {
     localStorage.setItem('active_report_subtab', subtab);
     setActiveTab('reports');
   };
 
+  // Today label
+  const filterLabel = dateFilter === 'today' ? "Today" : dateFilter === 'yesterday' ? "Yesterday" : customDate;
+  const filteredSales = getFilteredSales();
+  const filteredSalesTotal = filteredSales.reduce((s, b) => s + Number(b.grandTotal || b.total || 0), 0);
+  const filteredCash = filteredSales.filter(s => (s.paymentMethod || '').toLowerCase().includes('cash')).reduce((sum, s) => sum + Number(s.grandTotal || s.total || 0), 0);
+  const filteredUpi = filteredSales.filter(s => (s.paymentMethod || '').toLowerCase().includes('upi')).reduce((sum, s) => sum + Number(s.grandTotal || s.total || 0), 0);
+  const filteredCredit = filteredSales.filter(s => (s.paymentMethod || '').toLowerCase().includes('credit')).reduce((sum, s) => sum + Number(s.grandTotal || s.total || 0), 0);
+
+  // Merged urgent alerts
+  const allAlerts = [
+    ...(stats.urgentNotifications || []),
+    ...(stats.lowStockItems || []).map(item => ({
+      id: `low-stock-${item.id}`,
+      type: 'danger',
+      message: `LOW STOCK: "${item.medicineName || item.name}" — only ${item.stockQuantity ?? item.stock ?? 0} units left`,
+      time: 'System Alert',
+      medicineId: item.id
+    })),
+    ...(notifications || []).filter(n => !n.resolved)
+  ].slice(0, 6);
+
+  // Expired batch count
+  const expiredBatches = batches.filter(b => b.status === 'Expired').length;
+  const nearExpiryBatches = batches.filter(b => {
+    if (!b.expiryDate) return false;
+    const diff = (new Date(b.expiryDate) - new Date()) / (1000 * 60 * 60 * 24);
+    return diff > 0 && diff <= 90;
+  }).length;
+
+  // Inventory summary numbers
+  const totalMedTypes = Array.isArray(medicines) ? medicines.length : 0;
+  const totalStockPcs = Array.isArray(medicines)
+    ? medicines.reduce((s, m) => s + Number(m.stockQuantity ?? m.stock ?? 0), 0)
+    : 0;
+  const outOfStock = Array.isArray(medicines)
+    ? medicines.filter(m => Number(m.stockQuantity ?? m.stock ?? 0) === 0).length
+    : 0;
+  const lowStockCount = stats.lowStockAlertsCount;
+
   return (
-    <div className="space-y-6">
-      {/* Greeter Banner */}
-      <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-3xl p-6 shadow-xl relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="absolute top-0 right-0 w-80 h-80 rounded-full bg-white/5 blur-3xl" />
+    <div className="space-y-6 font-sans">
+
+      {/* ── TOP HEADER BANNER ── */}
+      <div className="bg-gradient-to-r from-blue-700 via-blue-600 to-indigo-600 text-white rounded-3xl p-6 shadow-xl relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="absolute top-0 right-0 w-96 h-96 rounded-full bg-white/5 blur-3xl pointer-events-none" />
         <div className="relative z-10 text-left">
-          <h3 className="text-xl font-black">{role} Dashboard Overview! 👋</h3>
-          <p className="text-xs text-blue-100/90 mt-1 max-w-lg leading-relaxed font-semibold">
-            Simple numbers and tasks matching your job. Easy to understand and manage.
+          <div className="flex items-center gap-2 mb-1">
+            <Activity size={16} className="opacity-80 animate-pulse" />
+            <span className="text-[10px] font-black uppercase tracking-widest opacity-70">Live Business Dashboard</span>
+          </div>
+          <h2 className="text-2xl font-black tracking-tight">{role} — {filterLabel}'s Overview</h2>
+          <p className="text-xs text-blue-100/80 mt-1 max-w-md font-medium">
+            Real-time snapshot of your store's health. Click any card to open the detailed report.
           </p>
         </div>
-        <div className="relative z-10 flex items-center gap-2">
-          {role === 'Doctor' ? (
-            <>
-              <button 
-                onClick={() => setActiveTab('prescription')}
-                className="px-4 py-2.5 bg-white text-blue-800 rounded-xl text-xs font-bold shadow-md hover:bg-slate-50 active:scale-[0.99] transition cursor-pointer"
-              >
-                Prescribe New Medicine
-              </button>
-              <button 
-                onClick={() => setActiveTab('prescription')}
-                className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-xl text-xs font-bold shadow-md active:scale-[0.99] transition cursor-pointer"
-              >
-                View Patient Rx Logs
-              </button>
-            </>
-          ) : (
-            <>
-              <button 
-                onClick={() => setActiveTab('billing')}
-                className="px-4 py-2.5 bg-white text-blue-800 rounded-xl text-xs font-bold shadow-md hover:bg-slate-50 active:scale-[0.99] transition cursor-pointer"
-              >
-                Create New Bill
-              </button>
-              <button 
-                onClick={handleRackReallocationSimulation}
-                className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-xl text-xs font-bold shadow-md active:scale-[0.99] transition cursor-pointer"
-              >
-                Test Shelf Full Alarm
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* ========================================================= */}
-      {/* ROLE SPECIFIC DASHBOARDS */}
-      {/* ========================================================= */}
-      
-      {/* 1. ADMIN DASHBOARD */}
-      {role === 'Admin' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-            
-            <div 
-              onClick={() => navigateToReport('sales')}
-              className="unique-card p-5 text-left relative overflow-hidden cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-              title="Click to view sales reports"
+        <div className="relative z-10 flex flex-wrap items-center gap-2">
+          {/* Date Filter Buttons */}
+          {['today', 'yesterday', 'custom'].map(f => (
+            <button
+              key={f}
+              onClick={() => setDateFilter(f)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${dateFilter === f ? 'bg-white text-blue-800 shadow-md' : 'bg-white/10 text-white border border-white/20 hover:bg-white/20'}`}
             >
-              <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">Today's Sales (Money In)</span>
-              <h3 className="text-lg font-black text-slate-800 mt-1">₹ {(Array.isArray(salesHistory) ? salesHistory.reduce((sum, s) => sum + (parseFloat(s.grandTotal || s.total) || 0), 0) : 0).toFixed(2)}</h3>
-              <div className="w-1.5 h-6 bg-blue-500 rounded-full absolute right-4 top-5" />
-              <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-3.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-                <span>View Details</span>
-                <ArrowRight size={9} className="transform group-hover:translate-x-0.5 transition-transform duration-300" />
-              </div>
-            </div>
-
-            <div 
-              onClick={() => navigateToReport('financial')}
-              className="unique-card p-5 text-left relative overflow-hidden cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-              title="Click to view earnings ledger"
-            >
-              <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">Money Made This Month</span>
-              <h3 className="text-lg font-black text-blue-600 mt-1">₹ 2,45,800.00</h3>
-              <div className="w-1.5 h-6 bg-indigo-500 rounded-full absolute right-4 top-5" />
-              <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-3.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-                <span>View Details</span>
-                <ArrowRight size={9} className="transform group-hover:translate-x-0.5 transition-transform duration-300" />
-              </div>
-            </div>
-
-            <div 
-              onClick={() => setActiveTab('medicine-master')}
-              className="unique-card p-5 text-left relative overflow-hidden cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-              title="Click to manage medicines list"
-            >
-              <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">Total Medicines in Shop</span>
-              <h3 className="text-lg font-black text-slate-800 mt-1">{medicines.length} Types</h3>
-              <div className="w-1.5 h-6 bg-blue-500 rounded-full absolute right-4 top-5" />
-              <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-3.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-                <span>Manage Catalog</span>
-                <ArrowRight size={9} className="transform group-hover:translate-x-0.5 transition-transform duration-300" />
-              </div>
-            </div>
-
-            <div 
-              onClick={() => setActiveTab('supplier-management')}
-              className="unique-card p-5 text-left relative overflow-hidden cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-              title="Click to manage suppliers"
-            >
-              <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">Medicine Suppliers</span>
-              <h3 className="text-lg font-black text-slate-800 mt-1">{suppliers.length} Contacts</h3>
-              <div className="w-1.5 h-6 bg-indigo-500 rounded-full absolute right-4 top-5" />
-              <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-3.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-                <span>Manage Suppliers</span>
-                <ArrowRight size={9} className="transform group-hover:translate-x-0.5 transition-transform duration-300" />
-              </div>
-            </div>
-
-            <div 
-              onClick={() => setActiveTab('purchase-management')}
-              className="unique-card p-5 text-left relative overflow-hidden cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-              title="Click to view purchase orders"
-            >
-              <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">Orders Sent to Suppliers</span>
-              <h3 className="text-lg font-black text-slate-800 mt-1">{purchaseOrders.length} Orders</h3>
-              <div className="w-1.5 h-6 bg-amber-500 rounded-full absolute right-4 top-5" />
-              <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-3.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-                <span>View Orders</span>
-                <ArrowRight size={9} className="transform group-hover:translate-x-0.5 transition-transform duration-300" />
-              </div>
-            </div>
-            
-            <div 
-              onClick={() => setActiveTab('supplier-management')}
-              className="unique-card p-5 text-left relative overflow-hidden border-l-4 border-l-red-500 cursor-pointer hover:shadow-xl hover:border-red-200 hover:scale-[1.01] transition-all duration-300 group"
-              title="Click to check supplier balances"
-            >
-              <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">Money We Owe Suppliers</span>
-              <h3 className="text-lg font-black text-red-600 mt-1">₹ {(Array.isArray(suppliers) ? suppliers.reduce((sum, s) => sum + (parseFloat(s.outstandingBalance || s.balanceDue) || 0), 0) : 0).toFixed(2)}</h3>
-              <div className="flex items-center gap-1 text-[8px] font-extrabold text-red-600 mt-3.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-                <span>Check Balances</span>
-                <ArrowRight size={9} className="transform group-hover:translate-x-0.5 transition-transform duration-300" />
-              </div>
-            </div>
-
-            <div 
-              onClick={() => setActiveTab('expiry')}
-              className="unique-card p-5 text-left relative overflow-hidden border-l-4 border-l-red-500 cursor-pointer hover:shadow-xl hover:border-red-200 hover:scale-[1.01] transition-all duration-300 group"
-              title="Click to check expired stocks"
-            >
-              <span className="block text-[9px] font-bold text-red-500 uppercase tracking-wider">Expired (Do Not Sell)</span>
-              <h3 className="text-lg font-black text-red-600 mt-1">{batches.filter(b => b.status === 'Expired').length} Boxes</h3>
-              <div className="flex items-center gap-1 text-[8px] font-extrabold text-red-600 mt-3.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-                <span>View Discards</span>
-                <ArrowRight size={9} className="transform group-hover:translate-x-0.5 transition-transform duration-300" />
-              </div>
-            </div>
-
-            <div 
-              onClick={() => setActiveTab('expiry')}
-              className="unique-card p-5 text-left relative overflow-hidden border-l-4 border-l-amber-500 cursor-pointer hover:shadow-xl hover:border-amber-200 hover:scale-[1.01] transition-all duration-300 group"
-              title="Click to view running out stock"
-            >
-              <span className="block text-[9px] font-bold text-amber-500 uppercase tracking-wider">Almost Empty (Need to Order)</span>
-              <h3 className="text-lg font-black text-amber-600 mt-1">{Array.isArray(medicines) ? medicines.filter(m => (m.stockQuantity ?? m.stock ?? 0) <= (m.reorderLevel ?? m.minStock ?? 0)).length : 0} Medicines</h3>
-              <div className="flex items-center gap-1 text-[8px] font-extrabold text-amber-600 mt-3.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-                <span>View Low Stock</span>
-                <ArrowRight size={9} className="transform group-hover:translate-x-0.5 transition-transform duration-300" />
-              </div>
-            </div>
-
-            <div 
-              onClick={() => setActiveTab('warehouse-management')}
-              className="unique-card p-5 text-left relative overflow-hidden cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-              title="Click to manage warehouse transfers"
-            >
-              <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">Warehouse Storage Space Used</span>
-              <h3 className="text-lg font-black text-slate-800 mt-1">42% Filled</h3>
-              <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-3.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-                <span>View Warehouse</span>
-                <ArrowRight size={9} className="transform group-hover:translate-x-0.5 transition-transform duration-300" />
-              </div>
-            </div>
-
-            <div 
-              onClick={() => setActiveTab('customer-management')}
-              className="unique-card p-5 text-left relative overflow-hidden cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-              title="Click to check customer accounts"
-            >
-              <span className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">Unpaid Customer Bills</span>
-              <h3 className="text-lg font-black text-slate-800 mt-1">₹ 24,100.00</h3>
-              <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-3.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-                <span>Manage Accounts</span>
-                <ArrowRight size={9} className="transform group-hover:translate-x-0.5 transition-transform duration-300" />
-              </div>
-            </div>
-
-          </div>
-        </div>
-      )}
-
-      {/* 2. PHARMACY MANAGER DASHBOARD */}
-      {role === 'Pharmacy Manager' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
-          
-          <div 
-            onClick={() => navigateToReport('sales')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bills Handled Today</span>
-            <h3 className="text-2xl font-black text-slate-800 mt-1">₹ {(Array.isArray(salesHistory) ? salesHistory.reduce((sum, s) => sum + (parseFloat(s.grandTotal || s.total) || 0), 0) : 0).toFixed(2)}</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>View Sales</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('prescription')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">New Doctor Slips Pending</span>
-            <h3 className="text-2xl font-black text-amber-600 mt-1">{prescriptions.filter(p => p.status === 'Pending').length} Slips</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>View Slips</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('expiry')}
-            className="unique-card p-5 text-left border-l-4 border-l-amber-500 cursor-pointer hover:shadow-xl hover:border-amber-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-amber-500 uppercase tracking-wider">Medicines Running Out</span>
-            <h3 className="text-2xl font-black text-amber-600 mt-1">{Array.isArray(medicines) ? medicines.filter(m => (m.stockQuantity ?? m.stock ?? 0) <= (m.reorderLevel ?? m.minStock ?? 0)).length : 0} Types</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-amber-600 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>View Expiries</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('expiry')}
-            className="unique-card p-5 text-left border-l-4 border-l-red-500 cursor-pointer hover:shadow-xl hover:border-red-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-red-500 uppercase tracking-wider">Lots Expiring Soon</span>
-            <h3 className="text-2xl font-black text-red-600 mt-1">{batches.filter(b => b.status === 'Expired').length} Lots</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-red-600 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>View Expired</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('purchase-management')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Orders Waiting for Approval</span>
-            <h3 className="text-2xl font-black text-slate-800 mt-1">{purchaseOrders.filter(p => p.status === 'Pending Approval').length} Orders</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>View Orders</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('customer-management')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Unpaid Customer Bills</span>
-            <h3 className="text-2xl font-black text-slate-800 mt-1">₹ 24,100.00</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>Check Credits</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-        </div>
-      )}
-
-      {/* 3. PHARMACIST DASHBOARD */}
-      {role === 'Pharmacist' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          
-          <div 
-            onClick={() => setActiveTab('prescription')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Doctor Slips to Dispense</span>
-            <h3 className="text-2xl font-black text-slate-800 mt-1">{prescriptions.filter(p => p.status === 'Pending').length} Slips</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>Dispense Now</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('dispensing')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Medicines Handled</span>
-            <h3 className="text-2xl font-black text-blue-600 mt-1">{prescriptions.filter(p => p.status === 'Dispensed').length} Bills</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>View Logs</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('medicine-master')}
-            className="unique-card p-5 text-left border-l-4 border-l-red-500 cursor-pointer hover:shadow-xl hover:border-red-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-red-500 uppercase tracking-wider">Out of Stock (Empty)</span>
-            <h3 className="text-2xl font-black text-red-600 mt-1">{Array.isArray(medicines) ? medicines.filter(m => (m.stockQuantity ?? m.stock ?? 0) === 0).length : 0} Medicines</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-red-600 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>View Catalog</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('dispensing')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Alternative Suggestions</span>
-            <h3 className="text-2xl font-black text-blue-600 mt-1">4 Active</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>Check Subs</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => navigateToReport('sales')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Patient History Logs</span>
-            <h3 className="text-2xl font-black text-slate-800 mt-1">120 Logs</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>View Invoices</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-        </div>
-      )}
-
-      {/* 4. INVENTORY DASHBOARD */}
-      {role === 'Inventory Staff' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
-          
-          <div 
-            onClick={() => setActiveTab('medicine-master')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Stock on Shelves</span>
-            <h3 className="text-2xl font-black text-slate-800 mt-1">{Array.isArray(medicines) ? medicines.reduce((sum, m) => sum + (m.stockQuantity ?? m.stock ?? 0), 0) : 0} Pcs</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>Check Stocks</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('rack-management')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Shelf Space Filled</span>
-            <h3 className="text-2xl font-black text-blue-600 mt-1">68% Space</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>Check Racks</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('warehouse-management')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Stock in Warehouse</span>
-            <h3 className="text-2xl font-black text-slate-800 mt-1">{warehouseStock.reduce((sum, w) => sum + w.qty, 0)} Pcs</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>Check Warehouse</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('medicine-batch')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Batch Lots in Shop</span>
-            <h3 className="text-2xl font-black text-slate-800 mt-1">{batches.length} Lots</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>Check Lots</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('expiry')}
-            className="unique-card p-5 text-left border-l-4 border-l-amber-500 cursor-pointer hover:shadow-xl hover:border-amber-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-amber-500 uppercase tracking-wider">Expiring in 60 Days</span>
-            <h3 className="text-2xl font-black text-amber-600 mt-1">{batches.filter(b => b.status === 'Active' && new Date(b.expiryDate) < new Date('2026-08-30')).length} Lots</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-amber-600 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>Check Expiry</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('inventory')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Stocks Moved Today</span>
-            <h3 className="text-2xl font-black text-slate-800 mt-1">14 Times</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>View Logs</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-        </div>
-      )}
-
-      {/* 5. PURCHASE MANAGER DASHBOARD */}
-      {role === 'Purchase Manager' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          
-          <div 
-            onClick={() => setActiveTab('purchase-management')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Active Orders We Sent</span>
-            <h3 className="text-2xl font-black text-slate-800 mt-1">{purchaseOrders.filter(p => p.status !== 'Goods Received').length} Orders</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>Check Orders</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('purchase-management')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Deliveries on the Way</span>
-            <h3 className="text-2xl font-black text-amber-600 mt-1">2 Shipments</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>Track Orders</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('supplier-management')}
-            className="unique-card p-5 text-left border-l-4 border-l-red-500 cursor-pointer hover:shadow-xl hover:border-red-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-red-500 uppercase tracking-wider">Money We Owe Distributors</span>
-            <h3 className="text-2xl font-black text-red-600 mt-1">₹ {(Array.isArray(suppliers) ? suppliers.reduce((sum, s) => sum + (parseFloat(s.outstandingBalance || s.balanceDue) || 0), 0) : 0).toFixed(2)}</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-red-600 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>Check Ledger</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('returns')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Expired Lots Sent Back</span>
-            <h3 className="text-2xl font-black text-slate-800 mt-1">7 Lots</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>Check Returns</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => navigateToReport('purchase')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Spent on Orders</span>
-            <h3 className="text-2xl font-black text-blue-600 mt-1">₹ 40,750.00</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>View Statements</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-        </div>
-      )}
-
-      {/* 6. BILLING DASHBOARD */}
-      {role === 'Billing Staff' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          
-          <div 
-            onClick={() => navigateToReport('sales')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bills Printed Today</span>
-            <h3 className="text-2xl font-black text-slate-800 mt-1">{salesHistory.length} Bills</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>View Sales</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => navigateToReport('sales')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-indigo-600 uppercase tracking-wider">Cash Received</span>
-            <h3 className="text-2xl font-black text-indigo-600 mt-1">₹ 65.00</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-indigo-600 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>Check Cash</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => navigateToReport('sales')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-blue-600 uppercase tracking-wider">Online / GPay / UPI Received</span>
-            <h3 className="text-2xl font-black text-blue-600 mt-1">₹ 615.00</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>Check Online</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => navigateToReport('sales')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Card Swipes Received</span>
-            <h3 className="text-2xl font-black text-slate-800 mt-1">₹ 0.00</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>Check Card</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-          <div 
-            onClick={() => setActiveTab('customer-management')}
-            className="unique-card p-5 text-left cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-          >
-            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Unpaid Customer Bills</span>
-            <h3 className="text-2xl font-black text-slate-800 mt-1">₹ 24,100.00</h3>
-            <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-              <span>Manage Credits</span>
-              <ArrowRight size={9} />
-            </div>
-          </div>
-
-        </div>
-      )}
-
-      {/* 7. DOCTOR DASHBOARD */}
-      {role === 'Doctor' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            
-            <div 
-              onClick={() => setActiveTab('prescription')}
-              className="unique-card p-5 text-left relative overflow-hidden cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-              title="Click to view all pending prescriptions"
-            >
-              <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">My Pending Prescriptions</span>
-              <h3 className="text-2xl font-black text-slate-800 mt-1">{prescriptions.filter(p => p.status === 'Pending').length} Patients</h3>
-              <div className="w-1.5 h-6 bg-blue-500 rounded-full absolute right-4 top-5" />
-              <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-500 mt-3.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-                <span>View Queue</span>
-                <ArrowRight size={9} className="transform group-hover:translate-x-0.5 transition-transform duration-300" />
-              </div>
-            </div>
-
-            <div 
-              onClick={() => setActiveTab('prescription')}
-              className="unique-card p-5 text-left relative overflow-hidden cursor-pointer hover:shadow-xl hover:border-emerald-200 hover:scale-[1.01] transition-all duration-300 group"
-              title="Click to view dispensed prescriptions log"
-            >
-              <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Dispensed (Patient Log)</span>
-              <h3 className="text-2xl font-black text-emerald-600 mt-1">{prescriptions.filter(p => p.status === 'Dispensed').length} Cases</h3>
-              <div className="w-1.5 h-6 bg-emerald-500 rounded-full absolute right-4 top-5" />
-              <div className="flex items-center gap-1 text-[8px] font-extrabold text-emerald-600 mt-3.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-                <span>View Patient Log</span>
-                <ArrowRight size={9} className="transform group-hover:translate-x-0.5 transition-transform duration-300" />
-              </div>
-            </div>
-
-            <div 
-              onClick={() => setActiveTab('prescription')}
-              className="unique-card p-5 text-left relative overflow-hidden cursor-pointer hover:shadow-xl hover:border-blue-200 hover:scale-[1.01] transition-all duration-300 group"
-              title="Click to write a new prescription"
-            >
-              <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Prescribe New Rx</span>
-              <h3 className="text-2xl font-black text-blue-600 mt-1">New Slip</h3>
-              <div className="w-1.5 h-6 bg-blue-600 rounded-full absolute right-4 top-5" />
-              <div className="flex items-center gap-1 text-[8px] font-extrabold text-blue-600 mt-3.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 select-none">
-                <span>Write Prescription</span>
-                <ArrowRight size={9} className="transform group-hover:translate-x-0.5 transition-transform duration-300" />
-              </div>
-            </div>
-
-            <div className="unique-card p-5 text-left relative overflow-hidden">
-              <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Active Patient Visits</span>
-              <h3 className="text-2xl font-black text-slate-800 mt-1">12 Today</h3>
-              <div className="w-1.5 h-6 bg-indigo-500 rounded-full absolute right-4 top-5" />
-            </div>
-
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            
-            <div className="unique-card p-6 text-left space-y-4">
-              <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
-                Patient Visits vs Prescriptions (Last 7 Days)
-              </h4>
-              <div className="h-48 flex items-end justify-between gap-2 pt-6">
-                {[
-                  { day: 'Mon', visits: 10, rx: 8 },
-                  { day: 'Tue', visits: 12, rx: 11 },
-                  { day: 'Wed', visits: 8, rx: 7 },
-                  { day: 'Thu', visits: 15, rx: 14 },
-                  { day: 'Fri', visits: 11, rx: 9 },
-                  { day: 'Sat', visits: 7, rx: 6 },
-                  { day: 'Sun', visits: 4, rx: 3 },
-                ].map((d, idx) => {
-                  const maxVal = 18;
-                  const visitHeight = (d.visits / maxVal) * 100;
-                  const rxHeight = (d.rx / maxVal) * 100;
-                  return (
-                    <div key={idx} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group">
-                      <div className="w-full flex items-end justify-center gap-1 h-36">
-                        <div 
-                          style={{ height: `${visitHeight}%` }} 
-                          className="w-3 sm:w-4 bg-blue-500/20 hover:bg-blue-500 rounded-t-sm transition-all duration-300 relative cursor-pointer"
-                          title={`Visits: ${d.visits}`}
-                        >
-                          <span className="absolute -top-6 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[8px] px-1 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                            {d.visits}
-                          </span>
-                        </div>
-                        <div 
-                          style={{ height: `${rxHeight}%` }} 
-                          className="w-3 sm:w-4 bg-teal-500/30 hover:bg-teal-500 rounded-t-sm transition-all duration-300 relative cursor-pointer"
-                          title={`Prescriptions: ${d.rx}`}
-                        >
-                          <span className="absolute -top-6 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[8px] px-1 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                            {d.rx}
-                          </span>
-                        </div>
-                      </div>
-                      <span className="text-[10px] text-slate-400 font-bold">{d.day}</span>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="flex justify-center gap-6 text-[10px] font-bold text-slate-500 pt-2 border-t border-slate-100">
-                <div className="flex items-center gap-1.5">
-                  <div className="w-2.5 h-2.5 bg-blue-500 rounded-sm" />
-                  <span>Patient Visits</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="w-2.5 h-2.5 bg-teal-500 rounded-sm" />
-                  <span>Prescriptions Written</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="unique-card p-6 text-left space-y-4">
-              <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
-                Top Prescribed Medicines (This Month)
-              </h4>
-              <div className="space-y-3">
-                {[
-                  { name: 'Paracetamol 650mg (Calpol)', count: 42, percentage: 85, color: 'bg-blue-500' },
-                  { name: 'Amoxicillin 500mg', count: 28, percentage: 60, color: 'bg-teal-500' },
-                  { name: 'Metformin 500mg', count: 21, percentage: 45, color: 'bg-indigo-500' },
-                  { name: 'Pantoprazole 40mg', count: 18, percentage: 38, color: 'bg-purple-500' },
-                  { name: 'Cetirizine 10mg', count: 15, percentage: 30, color: 'bg-pink-500' }
-                ].map((med, idx) => (
-                  <div key={idx} className="space-y-1">
-                    <div className="flex justify-between text-[11px] font-bold text-slate-600 font-sans">
-                      <span>{med.name}</span>
-                      <span>{med.count} times</span>
-                    </div>
-                    <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                      <div style={{ width: `${med.percentage}%` }} className={`h-full ${med.color} rounded-full`} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-          </div>
-        </div>
-      )}
-
-      {/* View Full Reports Banner */}
-      <div 
-        onClick={() => setActiveTab('reports')}
-        className="bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-700 text-white rounded-3xl p-6 shadow-xl relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-6 cursor-pointer hover:shadow-2xl hover:translate-y-[-2px] transition-all duration-300 group select-none"
-      >
-        <div className="absolute top-0 right-0 w-96 h-96 rounded-full bg-white/5 blur-3xl" />
-        <div className="flex items-center gap-4 relative z-10">
-          <div className="h-12 w-12 bg-white/10 backdrop-blur-md border border-white/20 text-white rounded-2xl flex items-center justify-center shadow-lg shrink-0">
-            <BarChart3 size={22} className="animate-pulse" />
-          </div>
-          <div className="text-left">
-            <h3 className="text-lg font-black tracking-tight">See Store History & Reports</h3>
-            <p className="text-xs text-blue-100/90 mt-1 max-w-md leading-relaxed font-semibold">
-              Check daily sales invoices, stock buying statements, and manual stock updates in simple tables.
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-1.5 px-4 py-2.5 bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 text-white rounded-xl text-xs font-bold shadow-md transition relative z-10 shrink-0 select-none">
-          Open History Book
-        </div>
-      </div>
-
-      {/* Live System Alerts Log */}
-      <div className="unique-card p-6 text-left space-y-4">
-        <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
-          <AlertCircle size={15} className="text-red-500 animate-pulse" />
-          Urgent Message Inbox
-        </h4>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {notifications.filter(n => !n.resolved).slice(0, 3).map(alert => (
-            <div key={alert.id} className={`p-3 rounded-xl border flex items-start gap-2.5 ${
-              alert.type === 'danger' ? 'bg-red-50/60 border-red-200 text-red-800' : 'bg-amber-50/60 border-amber-200 text-amber-800'
-            }`}>
-              {alert.type === 'danger' ? <ShieldAlert size={14} className="mt-0.5 shrink-0" /> : <AlertTriangle size={14} className="mt-0.5 shrink-0" />}
-              <div className="text-xs text-left">
-                <p className="font-bold leading-snug">{alert.message}</p>
-                <span className="text-[9px] opacity-75 block mt-1">{alert.time}</span>
-              </div>
-            </div>
+              <CalendarDays size={11} />
+              {f.charAt(0).toUpperCase() + f.slice(1)}
+            </button>
           ))}
-          {notifications.filter(n => !n.resolved).length === 0 && (
-            <div className="col-span-3 text-center py-8 text-slate-400 text-xs font-semibold">
-              No new alerts. Everything is running fine!
-            </div>
+          {dateFilter === 'custom' && (
+            <input
+              type="date"
+              value={customDate}
+              onChange={e => setCustomDate(e.target.value)}
+              className="px-2 py-1.5 rounded-xl text-xs font-bold bg-white/10 text-white border border-white/30 focus:outline-none focus:bg-white/20 cursor-pointer"
+            />
+          )}
+          <button
+            onClick={refetchStats}
+            className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white border border-white/20 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5"
+          >
+            <RefreshCw size={11} className={loadingStats ? 'animate-spin' : ''} />
+            Refresh
+          </button>
+          {role !== 'Doctor' && (
+            <button
+              onClick={() => setActiveTab('billing')}
+              className="px-4 py-1.5 bg-white text-blue-800 rounded-xl text-xs font-bold shadow-md hover:bg-slate-50 transition cursor-pointer"
+            >
+              + New Bill
+            </button>
           )}
         </div>
       </div>
 
-      {/* Fast Moving Medicine Stock Table */}
+      {/* ================================================================= */}
+      {/* ── SECTION 1: TODAY'S SALES SUMMARY (All roles except Doctor) ──  */}
+      {/* ================================================================= */}
+      {role !== 'Doctor' && (
+        <div className="space-y-3">
+          <SectionTitle icon={Wallet} label={`${filterLabel}'s Sales Summary`} color="text-blue-600" />
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+
+            {/* Today Sales Total */}
+            <StatCard
+              label={`${filterLabel}'s Total Sales`}
+              value={`₹ ${(dateFilter === 'today' ? stats.totalSalesToday : filteredSalesTotal).toFixed(2)}`}
+              sub={`${filteredSales.length} bills`}
+              accentColor="blue"
+              icon={TrendingUp}
+              onClick={() => navigateToReport('sales')}
+            />
+
+            {/* Cash Collection */}
+            <StatCard
+              label="Cash Collection"
+              value={`₹ ${(dateFilter === 'today' ? stats.todayCollectionsCash : filteredCash).toFixed(2)}`}
+              accentColor="green"
+              icon={Wallet}
+              onClick={() => navigateToReport('sales')}
+            />
+
+            {/* UPI Collection */}
+            <StatCard
+              label="UPI / GPay Collected"
+              value={`₹ ${(dateFilter === 'today' ? stats.todayCollectionsUPI : filteredUpi).toFixed(2)}`}
+              accentColor="indigo"
+              icon={Smartphone}
+              onClick={() => navigateToReport('sales')}
+            />
+
+            {/* Credit Sales */}
+            <StatCard
+              label="Credit Sales (Pending)"
+              value={`₹ ${(dateFilter === 'today' ? stats.creditSalesToday : filteredCredit).toFixed(2)}`}
+              accentColor="amber"
+              icon={CreditCard}
+              onClick={() => navigateToReport('sales')}
+            />
+
+            {/* Supplier Payables */}
+            <StatCard
+              label="Supplier Payables (Due)"
+              value={`₹ ${stats.totalSupplierPayable.toFixed(2)}`}
+              accentColor="red"
+              icon={ShoppingCart}
+              onClick={() => setActiveTab('supplier-management')}
+              urgent
+            />
+
+            {/* Customer Receivables */}
+            <StatCard
+              label="Customer Receivables"
+              value={`₹ ${stats.customerReceivable.toFixed(2)}`}
+              accentColor="purple"
+              icon={Users}
+              onClick={() => setActiveTab('customer-management')}
+            />
+
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* ── SECTION 2: INVENTORY SUMMARY ── */}
+      {/* ================================================================= */}
+      <div className="space-y-3">
+        <SectionTitle icon={Package} label="Inventory Summary" color="text-emerald-700" />
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+
+          {/* Total Medicines */}
+          <StatCard
+            label="Medicine Types"
+            value={`${totalMedTypes} Types`}
+            accentColor="blue"
+            icon={Package}
+            onClick={() => setActiveTab('medicine-master')}
+          />
+
+          {/* Total Stock */}
+          <StatCard
+            label="Total Stock on Shelves"
+            value={`${totalStockPcs.toLocaleString()} pcs`}
+            accentColor="green"
+            icon={ClipboardList}
+            onClick={() => navigateToReport('inventory')}
+          />
+
+          {/* Low Stock */}
+          <StatCard
+            label="Low Stock SKUs"
+            value={`${lowStockCount} Items`}
+            accentColor="amber"
+            icon={AlertTriangle}
+            onClick={() => navigateToReport('inventory')}
+            urgent={lowStockCount > 0}
+          />
+
+          {/* Out of Stock */}
+          <StatCard
+            label="Out of Stock"
+            value={`${outOfStock} Medicines`}
+            accentColor="red"
+            icon={ShieldAlert}
+            onClick={() => setActiveTab('medicine-master')}
+            urgent={outOfStock > 0}
+          />
+
+          {/* Expired Batches */}
+          <StatCard
+            label="Expired Batches"
+            value={`${expiredBatches} Lots`}
+            accentColor="red"
+            icon={AlertCircle}
+            onClick={() => setActiveTab('expiry')}
+            urgent={expiredBatches > 0}
+          />
+
+          {/* Near Expiry */}
+          <StatCard
+            label="Expiring in 90 Days"
+            value={`${nearExpiryBatches} Batches`}
+            accentColor="amber"
+            icon={CalendarDays}
+            onClick={() => setActiveTab('expiry')}
+          />
+
+        </div>
+      </div>
+
+      {/* ================================================================= */}
+      {/* ── SECTION 3: WAREHOUSE & RACK SUMMARY ── */}
+      {/* ================================================================= */}
+      <div className="space-y-3">
+        <SectionTitle icon={Warehouse} label="Warehouse & Rack Summary" color="text-indigo-700" />
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+
+          {/* Warehouse Stock */}
+          <StatCard
+            label="Warehouse Stock"
+            value={`${Number(stats.totalWarehouseStock).toLocaleString()} boxes`}
+            sub="Total across all warehouses"
+            accentColor="blue"
+            icon={Building2}
+            onClick={() => setActiveTab('warehouse-management')}
+          />
+
+          {/* Rack Stock */}
+          <StatCard
+            label="Rack / Shelf Stock"
+            value={`${Number(stats.totalRackStock).toLocaleString()} units`}
+            sub="Allocated to racks"
+            accentColor="indigo"
+            icon={Layers}
+            onClick={() => setActiveTab('rack-management')}
+          />
+
+          {/* Total Batches */}
+          <StatCard
+            label="Total Batch Lots"
+            value={`${batches.length} Lots`}
+            accentColor="green"
+            icon={ClipboardList}
+            onClick={() => setActiveTab('medicine-batch')}
+          />
+
+          {/* Active Purchase Orders */}
+          <StatCard
+            label="Active Purchase Orders"
+            value={`${purchaseOrders.filter(p => p.status !== 'Goods Received').length} Orders`}
+            accentColor="amber"
+            icon={ShoppingCart}
+            onClick={() => setActiveTab('purchase-management')}
+          />
+
+          {/* Pending Approval POs */}
+          <StatCard
+            label="POs Pending Approval"
+            value={`${purchaseOrders.filter(p => p.status === 'Pending Approval').length} Orders`}
+            accentColor="red"
+            icon={ClipboardList}
+            onClick={() => setActiveTab('purchase-management')}
+          />
+
+          {/* Supplier Count */}
+          <StatCard
+            label="Active Suppliers"
+            value={`${suppliers.length} Partners`}
+            accentColor="purple"
+            icon={Users}
+            onClick={() => setActiveTab('supplier-management')}
+          />
+
+        </div>
+      </div>
+
+      {/* ================================================================= */}
+      {/* ── SECTION 4: URGENT NOTIFICATIONS + 7-DAY SPARK ── */}
+      {/* ================================================================= */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        {/* Urgent Notifications Panel */}
+        <div className="lg:col-span-2 unique-card p-6 text-left space-y-4">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+              <Bell size={14} className="text-red-500 animate-pulse" />
+              Urgent Notifications
+              {allAlerts.length > 0 && (
+                <span className="px-1.5 py-0.5 bg-red-100 text-red-700 rounded-full text-[9px] font-black">
+                  {allAlerts.length}
+                </span>
+              )}
+            </h4>
+            <button
+              onClick={() => navigateToReport('audit')}
+              className="text-[10px] text-blue-600 font-bold hover:underline cursor-pointer"
+            >
+              View All Logs →
+            </button>
+          </div>
+          <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+            {allAlerts.length === 0 ? (
+              <div className="text-center py-8 text-slate-400 text-xs font-semibold">
+                ✅ No urgent alerts. Everything is running fine!
+              </div>
+            ) : (
+              allAlerts.map(alert => (
+                <div
+                  key={alert.id}
+                  className={`p-3 rounded-2xl border flex items-start gap-2.5 ${
+                    alert.type === 'danger' || alert.type === 'error'
+                      ? 'bg-red-50/70 border-red-200 text-red-800'
+                      : 'bg-amber-50/70 border-amber-200 text-amber-800'
+                  }`}
+                >
+                  {alert.type === 'danger' || alert.type === 'error'
+                    ? <ShieldAlert size={14} className="mt-0.5 shrink-0" />
+                    : <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                  }
+                  <div className="text-xs text-left flex-1">
+                    <p className="font-bold leading-snug">{alert.message}</p>
+                    <span className="text-[9px] opacity-75 block mt-1">{alert.time}</span>
+                  </div>
+                  {alert.medicineId && (
+                    <button
+                      onClick={() => {
+                        localStorage.setItem('auto_po_medicine_id', alert.medicineId);
+                        setActiveTab('purchase');
+                      }}
+                      className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] font-black shadow-sm transition cursor-pointer self-center"
+                    >
+                      ⚡ Raise PO
+                    </button>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* 7-Day Sales Spark + Quick Links */}
+        <div className="space-y-4">
+          {/* 7-day mini chart */}
+          <div className="unique-card p-5 text-left space-y-3">
+            <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+              <BarChart3 size={14} className="text-blue-600" />
+              7-Day Sales Trend
+            </h4>
+            <SalesSparkBar data={stats.salesChart} />
+            <div className="flex justify-between text-[9px] font-bold text-slate-400">
+              <span>6 days ago</span>
+              <span>Today</span>
+            </div>
+          </div>
+
+          {/* Quick action shortcuts */}
+          <div className="unique-card p-5 text-left space-y-2">
+            <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider mb-3">Quick Actions</h4>
+            {[
+              { label: 'Full Sales Report', tab: null, report: 'sales', color: 'text-blue-600' },
+              { label: 'Inventory Report', tab: null, report: 'inventory', color: 'text-emerald-600' },
+              { label: 'Supplier Payments', tab: 'supplier-management', report: null, color: 'text-red-600' },
+              { label: 'Purchase Orders', tab: 'purchase-management', report: null, color: 'text-amber-600' },
+              { label: 'Warehouse View', tab: 'warehouse-management', report: null, color: 'text-indigo-600' },
+            ].map(item => (
+              <button
+                key={item.label}
+                onClick={() => item.report ? navigateToReport(item.report) : setActiveTab(item.tab)}
+                className={`w-full text-left flex items-center justify-between text-xs font-bold py-2 px-3 rounded-xl hover:bg-slate-50 transition cursor-pointer ${item.color}`}
+              >
+                <span>{item.label}</span>
+                <ArrowRight size={11} />
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ================================================================= */}
+      {/* ── SECTION 5: ROLE-SPECIFIC DOCTOR CARDS ── */}
+      {/* ================================================================= */}
+      {role === 'Doctor' && (
+        <div className="space-y-3">
+          <SectionTitle icon={Activity} label="Doctor's Today Panel" color="text-blue-700" />
+          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <StatCard label="Pending Prescriptions" value={`${prescriptions.filter(p => p.status === 'Pending').length} Patients`} accentColor="amber" icon={ClipboardList} onClick={() => setActiveTab('prescription')} />
+            <StatCard label="Dispensed Today" value={`${prescriptions.filter(p => p.status === 'Dispensed').length} Cases`} accentColor="green" icon={Package} onClick={() => setActiveTab('prescription')} />
+            <StatCard label="Write New Rx" value="New Prescription" accentColor="blue" icon={Activity} onClick={() => setActiveTab('prescription')} />
+            <StatCard label="Active Visits" value="12 Today" accentColor="indigo" icon={Users} onClick={() => setActiveTab('prescription')} />
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* ── SECTION 6: LIVE SHELF STOCK TABLE ── */}
+      {/* ================================================================= */}
       <div className="unique-card p-6 text-left space-y-4">
-        <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
-          <Package size={15} className="text-blue-600" />
-          Fast Moving Shelf Stocks
-        </h4>
+        <div className="flex items-center justify-between">
+          <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+            <Package size={14} className="text-blue-600" />
+            Fast-Moving Shelf Stocks (Top Items)
+          </h4>
+          <button
+            onClick={() => setActiveTab('medicine-master')}
+            className="text-[10px] text-blue-600 font-bold hover:underline cursor-pointer"
+          >
+            View Full Catalog →
+          </button>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="border-b border-slate-100 text-slate-400 uppercase font-bold text-[10px]">
                 <th className="py-2.5">Medicine Name</th>
-                <th className="py-2.5">Barcode Code / SKU</th>
-                <th className="py-2.5 text-center">Shelf Location</th>
-                <th className="py-2.5 text-center">Pcs Available</th>
-                <th className="py-2.5 text-center">Status</th>
+                <th className="py-2.5">Code / SKU</th>
+                <th className="py-2.5 text-center">Shelf / Rack</th>
+                <th className="py-2.5 text-center">Stock Qty</th>
+                <th className="py-2.5 text-center">Stock Status</th>
               </tr>
             </thead>
             <tbody>
-              {medicines.slice(0, 5).map(med => {
-                const isLow = med.stock <= med.minStock;
-                const isOut = med.stock === 0;
+              {Array.isArray(medicines) && medicines.slice(0, 8).map(med => {
+                const stock = Number(med.stockQuantity ?? med.stock ?? 0);
+                const reorder = Number(med.reorderLevel ?? med.minStock ?? 10);
+                const isOut = stock === 0;
+                const isLow = !isOut && stock <= reorder;
                 return (
-                  <tr key={med.id} className="border-b border-slate-100 hover:bg-slate-50/50">
-                    <td className="py-3 font-bold text-slate-700">{med.name}</td>
-                    <td className="py-3 text-slate-500 font-mono">{med.sku}</td>
-                    <td className="py-3 text-center text-slate-600">
-                      <span className="px-2 py-0.5 bg-slate-100 rounded border border-slate-200/50 font-bold">{med.rack}</span>
+                  <tr key={med.id} className="border-b border-slate-100 hover:bg-slate-50/50 cursor-pointer" onClick={() => setActiveTab('medicine-master')}>
+                    <td className="py-3 font-bold text-slate-700">{med.medicineName || med.name}</td>
+                    <td className="py-3 text-slate-400 font-mono text-[11px]">{med.medicineCode || med.sku || '—'}</td>
+                    <td className="py-3 text-center">
+                      <span className="px-2 py-0.5 bg-slate-100 rounded-lg border border-slate-200 text-[10px] font-bold text-slate-600">{med.rack || 'Unassigned'}</span>
                     </td>
-                    <td className="py-3 text-center font-black text-slate-700">{med.stock} pcs</td>
+                    <td className="py-3 text-center font-black text-slate-800">{stock.toLocaleString()}</td>
                     <td className="py-3 text-center">
                       {isOut ? (
-                        <span className="px-2 py-0.5 rounded-full text-[9px] font-bold text-red-700 bg-red-50 border border-red-200/50">Empty (No Stock)</span>
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-bold text-red-700 bg-red-50 border border-red-200 animate-pulse">⚠ Empty</span>
                       ) : isLow ? (
-                        <span className="px-2 py-0.5 rounded-full text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200/50 animate-pulse">Running Out</span>
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200">⬇ Low Stock</span>
                       ) : (
-                        <span className="px-2 py-0.5 rounded-full text-[9px] font-bold text-blue-700 bg-blue-50 border border-blue-200/50">Good Stock</span>
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200">✓ Good</span>
                       )}
                     </td>
                   </tr>
                 );
               })}
+              {(!Array.isArray(medicines) || medicines.length === 0) && (
+                <tr>
+                  <td colSpan={5} className="py-8 text-center text-slate-400 font-medium">
+                    No medicines in catalog yet.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* ── View Reports Banner ── */}
+      <div
+        onClick={() => setActiveTab('reports')}
+        className="bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-700 text-white rounded-3xl p-6 shadow-xl relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer hover:shadow-2xl hover:-translate-y-0.5 transition-all duration-300 group select-none"
+      >
+        <div className="absolute top-0 right-0 w-96 h-96 rounded-full bg-white/5 blur-3xl pointer-events-none" />
+        <div className="flex items-center gap-4 relative z-10">
+          <div className="h-12 w-12 bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl flex items-center justify-center shadow-lg shrink-0">
+            <BarChart3 size={22} className="animate-pulse" />
+          </div>
+          <div className="text-left">
+            <h3 className="text-lg font-black tracking-tight">Open Full Reports & Analytics</h3>
+            <p className="text-xs text-blue-100/90 mt-0.5 max-w-md font-medium">
+              Sales history, purchase statements, stock valuations, audit logs — all in one place.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 px-5 py-2.5 bg-white text-blue-800 rounded-xl text-xs font-black shadow-md transition relative z-10 shrink-0 group-hover:scale-[1.02]">
+          <BarChart3 size={13} />
+          Open Reports
+        </div>
+      </div>
+
     </div>
   );
 }

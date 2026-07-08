@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useDB } from '../../db/DBContext';
+import { racksAPI, warehouseAPI, notificationsAPI } from '../../db/api';
 
 /**
  * useRackController
@@ -8,70 +9,153 @@ import { useDB } from '../../db/DBContext';
  * The View (RackView.jsx) consumes this hook and renders the UI.
  */
 export function useRackController(role) {
-  const { notifications: dbNotifications, setNotifications: setDbNotifications } = useDB();
+  const { 
+    racks: dbRacks, 
+    refetch, 
+    stockTransfers: dbStockTransfers, 
+    medicines: dbAllMedicines, 
+    notifications: dbNotifications, 
+    setNotifications: setDbNotifications,
+    warehouseStock: dbWarehouseStock
+  } = useDB();
+
+  const warehouseStock = dbWarehouseStock || [];
+
+  // Trigger refetch once on mount to ensure fresh state
+  useEffect(() => {
+    refetch();
+  }, [refetch]);
 
   // ──────────────────────────────────────────────────────────
   // VIEW STATE MANAGEMENT (Sub-pages)
   // ──────────────────────────────────────────────────────────
   const [viewState, setViewState] = useState('dashboard');
-  const [selectedRackId, setSelectedRackId] = useState('RACK-A');
-  const [selectedCompId, setSelectedCompId] = useState('COMP-A1');
+  const [selectedRackId, setSelectedRackId] = useState('A1');
+  const [selectedCompId, setSelectedCompId] = useState('A1');
   const [activeModal, setActiveModal] = useState(null);
 
   // ──────────────────────────────────────────────────────────
-  // REACTIVE SEED DATA (Model layer)
+  // REACTIVE REAL-TIME DATA (Model layer)
   // ──────────────────────────────────────────────────────────
-  const [racks, setRacks] = useState([
-    { id: 'RACK-A', name: 'Rack A', code: 'A', type: 'Dry Storage', category: 'Tablets', maxCapacity: 500, location: 'Front Counter A', description: 'Primary tablets shelf', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-10' },
-    { id: 'RACK-B', name: 'Rack B', code: 'B', type: 'Dry Storage', category: 'Syrups', maxCapacity: 400, location: 'Shelf Row B', description: 'Liquid bottles storage', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-11' },
-    { id: 'RACK-C', name: 'Rack C', code: 'C', type: 'Dry Storage', category: 'Injections', maxCapacity: 300, location: 'Dispenser Desk C', description: 'Controlled injections space', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-12' },
-    { id: 'RACK-D', name: 'Rack D', code: 'D', type: 'Dry Storage', category: 'Ointments', maxCapacity: 300, location: 'Rear Shelf D', description: 'Ointments and gels', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-12' },
-    { id: 'RACK-COLD', name: 'Cold Rack', code: 'COLD', type: 'Refrigerated', category: 'Insulins / Vaccines', maxCapacity: 200, location: 'Cold Chain Freezer', description: 'Insulins & vaccine storage', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-13' },
-    { id: 'RACK-WH', name: 'Warehouse Rack', code: 'WH', type: 'Bulk Storage', category: 'Warehouse Stock', maxCapacity: 1000, location: 'Back Warehouse', description: 'Excess inventory backup', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-01' }
-  ]);
+  const racks = useMemo(() => {
+    const list = [...(dbRacks || [])];
+    if (!list.some(r => r.id === 'RACK-WH')) {
+      list.push({
+        id: 'RACK-WH',
+        name: 'Main Warehouse',
+        code: 'WH',
+        type: 'Central Warehouse',
+        category: 'Bulk Storage',
+        maxCapacity: 10000,
+        status: 'Active',
+        compartments: [
+          {
+            id: 'COMP-WH1',
+            name: 'Central Warehouse Bin A',
+            maxCapacity: 10000,
+            category: 'Bulk Storage',
+            status: 'Active',
+            createdBy: 'System',
+            createdDate: '2026-01-01'
+          }
+        ]
+      });
+    }
+    return list;
+  }, [dbRacks]);
 
-  const [compartments, setCompartments] = useState([
-    { id: 'COMP-A1', rackId: 'RACK-A', name: 'A1', category: 'Tablets', suitableType: 'Boxes', maxCapacity: 100, description: 'Shelf slot A1', status: 'Full', createdBy: 'Admin', createdDate: '2026-06-10' },
-    { id: 'COMP-A2', rackId: 'RACK-A', name: 'A2', category: 'Tablets', suitableType: 'Boxes', maxCapacity: 100, description: 'Shelf slot A2', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-10' },
-    { id: 'COMP-A3', rackId: 'RACK-A', name: 'A3', category: 'Tablets', suitableType: 'Boxes', maxCapacity: 100, description: 'Shelf slot A3', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-10' },
-    { id: 'COMP-A4', rackId: 'RACK-A', name: 'A4', category: 'Tablets', suitableType: 'Boxes', maxCapacity: 100, description: 'Shelf slot A4', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-10' },
-    { id: 'COMP-A5', rackId: 'RACK-A', name: 'A5', category: 'Tablets', suitableType: 'Boxes', maxCapacity: 100, description: 'Shelf slot A5', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-10' },
-    { id: 'COMP-B1', rackId: 'RACK-B', name: 'B1', category: 'Syrups', suitableType: 'Bottles', maxCapacity: 100, description: 'Liquid slot B1', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-11' },
-    { id: 'COMP-B2', rackId: 'RACK-B', name: 'B2', category: 'Syrups', suitableType: 'Bottles', maxCapacity: 100, description: 'Liquid slot B2', status: 'Full', createdBy: 'Admin', createdDate: '2026-06-11' },
-    { id: 'COMP-B3', rackId: 'RACK-B', name: 'B3', category: 'Syrups', suitableType: 'Bottles', maxCapacity: 100, description: 'Liquid slot B3', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-11' },
-    { id: 'COMP-C1', rackId: 'RACK-C', name: 'C1', category: 'Injections', suitableType: 'Vials', maxCapacity: 100, description: 'Injections slot C1', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-12' },
-    { id: 'COMP-D1', rackId: 'RACK-D', name: 'D1', category: 'Ointments', suitableType: 'Tubes', maxCapacity: 100, description: 'Ointment slot D1', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-12' },
-    { id: 'COMP-COLD1', rackId: 'RACK-COLD', name: 'Cold-1', category: 'Insulins', suitableType: 'Vials', maxCapacity: 100, description: 'Cold storage sub-rack 1', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-13' },
-    { id: 'COMP-COLD2', rackId: 'RACK-COLD', name: 'Cold-2', category: 'Vaccines', suitableType: 'Vials', maxCapacity: 100, description: 'Cold storage sub-rack 2', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-13' },
-    { id: 'COMP-WH1', rackId: 'RACK-WH', name: 'W-Bin1', category: 'Warehouse Stock', suitableType: 'Bulk Boxes', maxCapacity: 500, description: 'Bulk warehouse bin 1', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-01' },
-    { id: 'COMP-WH2', rackId: 'RACK-WH', name: 'W-Bin2', category: 'Warehouse Stock', suitableType: 'Bulk Boxes', maxCapacity: 500, description: 'Bulk warehouse bin 2', status: 'Active', createdBy: 'Admin', createdDate: '2026-06-01' }
-  ]);
+  const compartments = useMemo(() => {
+    return racks.flatMap(r => (r.compartments || []).map(c => ({
+      ...c,
+      rackId: r.id
+    })));
+  }, [racks]);
 
-  const [storedMedicines, setStoredMedicines] = useState([
-    { id: 'MED-101', name: 'Calpol 650mg', brandName: 'Calpol', batchNumber: 'B-CALP42', quantity: 100, unit: 'Boxes', supplier: 'Apex Medical Supplies', addedBy: 'Admin', addedDate: '2026-06-18', compartmentId: 'COMP-A1' },
-    { id: 'MED-102', name: 'Amoxicillin 500mg', brandName: 'Novamox', batchNumber: 'B-AMX99', quantity: 30, unit: 'Boxes', supplier: 'Biocare Pharma', addedBy: 'Admin', addedDate: '2026-06-18', compartmentId: 'COMP-A2' },
-    { id: 'MED-103', name: 'Lipitor 10mg', brandName: 'Lipitor', batchNumber: 'B-LIP09', quantity: 60, unit: 'Boxes', supplier: 'Pfizer Ltd', addedBy: 'Admin', addedDate: '2026-06-18', compartmentId: 'COMP-B1' },
-    { id: 'MED-104', name: 'Pantocid 40mg', brandName: 'Pantocid', batchNumber: 'B-PAN88', quantity: 100, unit: 'Boxes', supplier: 'Sun Pharma', addedBy: 'Admin', addedDate: '2026-06-18', compartmentId: 'COMP-B2' },
-    { id: 'MED-105', name: 'Insulin Glargine', brandName: 'Lantus', batchNumber: 'B-INS20', quantity: 15, unit: 'Boxes', supplier: 'Sanofi India', addedBy: 'Admin', addedDate: '2026-06-18', compartmentId: 'COMP-COLD1' },
-    { id: 'MED-106', name: 'Covishield Vaccine', brandName: 'Covishield', batchNumber: 'B-COV55', quantity: 45, unit: 'Boxes', supplier: 'Serum Institute', addedBy: 'Admin', addedDate: '2026-06-18', compartmentId: 'COMP-COLD2' },
-    { id: 'MED-107', name: 'Narcotic Fentanyl', brandName: 'Fentanyl', batchNumber: 'B-FEN88', quantity: 20, unit: 'Boxes', supplier: 'Apex Medical Supplies', addedBy: 'Admin', addedDate: '2026-06-18', compartmentId: 'COMP-C1' },
-    { id: 'MED-109', name: 'Aspirin (Headache Relief)', brandName: 'Bayer', batchNumber: 'B-ASP99', quantity: 0, unit: 'Boxes', supplier: 'Bayer Pharma', addedBy: 'Admin', addedDate: '2026-06-18', compartmentId: 'COMP-A3' },
-    { id: 'MED-110', name: 'Ibuprofen (Migraine)', brandName: 'Advil', batchNumber: 'B-ADV02', quantity: 0, unit: 'Boxes', supplier: 'Pfizer Ltd', addedBy: 'Admin', addedDate: '2026-06-18', compartmentId: 'COMP-A4' },
-    { id: 'MED-111', name: 'Gastro-resistant Omeprazole', brandName: 'Omez', batchNumber: 'B-OMZ03', quantity: 0, unit: 'Boxes', supplier: 'Dr. Reddys', addedBy: 'Admin', addedDate: '2026-06-18', compartmentId: 'COMP-A5' },
-    { id: 'MED-101-WH', name: 'Calpol 650mg', brandName: 'Calpol', batchNumber: 'B-CALP99_WH', quantity: 350, unit: 'Boxes', supplier: 'Apex Medical Supplies', addedBy: 'Admin', addedDate: '2026-06-10', compartmentId: 'COMP-WH1' },
-    { id: 'MED-108', name: 'Metformin 500mg', brandName: 'Glycomet', batchNumber: 'B-MET301_WH', quantity: 250, unit: 'Boxes', supplier: 'USV Pharma', addedBy: 'Admin', addedDate: '2026-06-12', compartmentId: 'COMP-WH2' }
-  ]);
+  const storedMedicines = useMemo(() => {
+    const list = [];
+    racks.forEach(r => {
+      if (r.compartments && r.compartments.length > 0) {
+        r.compartments.forEach(c => {
+          if (c.medicineLocations && c.medicineLocations.length > 0) {
+            c.medicineLocations.forEach(ml => {
+              list.push({
+                id: String(ml.id),
+                medicineId: ml.medicineId,
+                name: ml.medicine?.medicineName || ml.medicine?.name || 'Unknown',
+                brandName: ml.medicine?.brandName || '',
+                batchNumber: ml.batchNumber || 'N/A',
+                quantity: ml.qty,
+                unit: ml.unit || 'Boxes',
+                supplier: ml.medicine?.supplier?.name || 'Generic Supplier',
+                addedBy: ml.medicine?.createdBy || 'Admin',
+                addedDate: ml.createdAt?.substring(0, 10) || new Date().toISOString().substring(0, 10),
+                compartmentId: c.id,
+                rackId: r.id
+              });
+            });
+          }
+        });
+      }
+      if (r.rackStocks && r.rackStocks.length > 0) {
+        r.rackStocks.forEach(rs => {
+          if (!list.some(item => item.rackId === r.id && item.medicineId === rs.medicineId && item.batchNumber === rs.batchNumber)) {
+            list.push({
+              id: rs.id,
+              medicineId: rs.medicineId,
+              name: rs.medicine?.medicineName || rs.medicine?.name || 'Unknown',
+              brandName: rs.medicine?.brandName || '',
+              batchNumber: rs.batchNumber || 'N/A',
+              quantity: rs.qty,
+              unit: 'Units',
+              supplier: 'Supplier',
+              addedBy: 'System',
+              addedDate: rs.createdAt?.substring(0, 10) || new Date().toISOString().substring(0, 10),
+              compartmentId: r.code + '1',
+              rackId: r.id
+            });
+          }
+        });
+      }
+    });
 
-  const [transferHistory, setTransferHistory] = useState([
-    { transactionId: 'TXN-001', transferType: 'Warehouse to Rack', source: 'Warehouse Storage (W-Bin1)', destination: 'Rack A (A1)', medicineName: 'Calpol 650mg', batchNumber: 'B-CALP42', quantity: 100, doneBy: 'Admin', dateTime: '2026-06-18 09:30 AM', status: 'Completed' },
-    { transactionId: 'TXN-002', transferType: 'Rack to Rack', source: 'Rack A (A1)', destination: 'Rack B (B2)', medicineName: 'Pantocid 40mg', batchNumber: 'B-PAN88', quantity: 50, doneBy: 'Admin', dateTime: '2026-06-18 10:15 AM', status: 'Completed' }
-  ]);
+    // Add warehouse stocks as virtual compartment COMP-WH1 medicines:
+    warehouseStock.forEach(ws => {
+      list.push({
+        id: `WS-${ws.id}`,
+        medicineId: ws.medicineId,
+        name: ws.medicine?.medicineName || ws.medicine?.name || 'Unknown',
+        brandName: ws.medicine?.brandName || '',
+        batchNumber: ws.batchNumber || 'N/A',
+        quantity: ws.qty,
+        unit: 'Boxes',
+        supplier: ws.medicine?.supplier?.name || 'Generic Supplier',
+        addedBy: ws.medicine?.createdBy || 'Admin',
+        addedDate: ws.receivedDate?.substring(0, 10) || new Date().toISOString().substring(0, 10),
+        compartmentId: 'COMP-WH1',
+        rackId: 'RACK-WH'
+      });
+    });
+
+    return list;
+  }, [racks, warehouseStock]);
+
+  const transferHistory = useMemo(() => {
+    return (dbStockTransfers || []).map(t => ({
+      transactionId: t.id,
+      transferType: t.transferType || 'Rack to Rack',
+      source: t.fromLocation || 'Unknown',
+      destination: t.toRack || 'Unknown',
+      medicineName: t.medicineName || 'Unknown',
+      batchNumber: 'N/A',
+      quantity: t.qty,
+      doneBy: t.transferredBy || 'Admin',
+      dateTime: t.createdAt?.replace('T', ' ').substring(0, 16) || new Date().toISOString().substring(0, 10),
+      status: t.status || 'Completed'
+    }));
+  }, [dbStockTransfers]);
 
   const [localNotifications, setLocalNotifications] = useState([
-    { id: 1, text: 'Rack A1 is full' },
-    { id: 2, text: 'Rack A2 has available space' },
-    { id: 3, text: 'Rack A created successfully' },
-    { id: 4, text: 'Capacity updated successfully' }
+    { id: 1, text: 'Rack system operational' }
   ]);
 
   // ──────────────────────────────────────────────────────────
@@ -148,39 +232,36 @@ export function useRackController(role) {
   const [rackDescInput, setRackDescInput] = useState('');
   const [rackStatusInput, setRackStatusInput] = useState('Active');
 
-  const submitNewRack = (e) => {
+  const submitNewRack = async (e) => {
     e.preventDefault();
     if (!rackNameInput.trim() || !rackCodeInput.trim()) return;
-    const targetId = `RACK-${rackCodeInput.trim().toUpperCase()}`;
-    const newRack = {
-      id: targetId, name: rackNameInput.trim(), code: rackCodeInput.trim().toUpperCase(),
-      type: rackTypeInput, category: rackCatInput || 'General',
-      maxCapacity: parseInt(rackCapInput) || 500,
-      location: rackLocationInput || 'Counter Area',
-      description: rackDescInput || 'General Storage Rack',
-      status: rackStatusInput, createdBy: role || 'Admin',
-      createdDate: new Date().toISOString().substring(0, 10)
-    };
-    const compCount = parseInt(rackCompCountInput) || 5;
-    const compCapacity = Math.floor(newRack.maxCapacity / compCount);
-    const newComps = [];
-    for (let i = 1; i <= compCount; i++) {
-      const compName = `${newRack.code}${i}`;
-      newComps.push({
-        id: `COMP-${newRack.code.toUpperCase()}-${compName}`,
-        rackId: targetId, name: compName, category: newRack.category,
-        suitableType: 'Boxes', maxCapacity: compCapacity,
-        description: `Automated slot ${compName}`, status: 'Active',
-        createdBy: role || 'Admin', createdDate: new Date().toISOString().substring(0, 10)
+    const targetId = rackCodeInput.trim().toUpperCase(); // Using code directly as ID matches seeded schema patterns
+
+    try {
+      const res = await racksAPI.create({
+        id: targetId,
+        name: rackNameInput.trim(),
+        code: rackCodeInput.trim().toUpperCase(),
+        type: rackTypeInput,
+        category: rackCatInput || 'General',
+        maxCapacity: parseInt(rackCapInput) || 500,
+        location: rackLocationInput || 'Counter Area',
+        description: rackDescInput || 'General Storage Rack',
+        status: rackStatusInput,
+        createdBy: role || 'Admin'
       });
+
+      if (res.success) {
+        await refetch();
+        addNotification(`Rack ${rackNameInput.trim()} created successfully`);
+        addNotification('Capacity updated successfully');
+        setActiveModal(null);
+        setRackNameInput(''); setRackCodeInput(''); setRackCatInput('');
+        setRackLocationInput(''); setRackDescInput(''); setRackCompCountInput('5');
+      }
+    } catch (err) {
+      alert('Error creating rack: ' + err.message);
     }
-    setRacks(prev => [...prev, newRack]);
-    setCompartments(prev => [...prev, ...newComps]);
-    addNotification(`Rack ${newRack.name} created successfully`);
-    addNotification('Capacity updated successfully');
-    setActiveModal(null);
-    setRackNameInput(''); setRackCodeInput(''); setRackCatInput('');
-    setRackLocationInput(''); setRackDescInput(''); setRackCompCountInput('5');
   };
 
   // ──────────────────────────────────────────────────────────
@@ -193,23 +274,30 @@ export function useRackController(role) {
   const [compDescInput, setCompDescInput] = useState('');
   const [compStatusInput, setCompStatusInput] = useState('Active');
 
-  const submitNewCompartment = (e) => {
+  const submitNewCompartment = async (e) => {
     e.preventDefault();
     if (!compNameInput.trim()) return;
     const genCompId = `COMP-${activeRack.code.toUpperCase()}-${compNameInput.trim().toUpperCase()}`;
-    const newComp = {
-      id: genCompId, rackId: selectedRackId, name: compNameInput.trim(),
-      category: compCatInput || 'General', suitableType: compTypeInput,
-      maxCapacity: parseInt(compCapInput) || 100,
-      description: compDescInput || 'Shelf Partition Sub-Rack',
-      status: compStatusInput, createdBy: role || 'Admin',
-      createdDate: new Date().toISOString().substring(0, 10)
-    };
-    setCompartments(prev => [...prev, newComp]);
-    addNotification(`${newComp.name} sub-rack added successfully`);
-    addNotification('Capacity updated successfully');
-    setActiveModal(null);
-    setCompNameInput(''); setCompCatInput(''); setCompDescInput('');
+
+    try {
+      await racksAPI.createCompartment(selectedRackId, {
+        id: genCompId,
+        name: compNameInput.trim(),
+        category: compCatInput || 'General',
+        suitableType: compTypeInput,
+        maxCapacity: parseInt(compCapInput) || 100,
+        description: compDescInput || 'Shelf Partition Sub-Rack',
+        status: compStatusInput,
+        createdBy: role || 'Admin'
+      });
+      await refetch();
+      addNotification(`${compNameInput.trim()} sub-rack added successfully`);
+      addNotification('Capacity updated successfully');
+      setActiveModal(null);
+      setCompNameInput(''); setCompCatInput(''); setCompDescInput('');
+    } catch (err) {
+      alert('Error creating compartment: ' + err.message);
+    }
   };
 
   // ──────────────────────────────────────────────────────────
@@ -222,7 +310,7 @@ export function useRackController(role) {
   const [medUnitInput, setMedUnitInput] = useState('Boxes');
   const [medSupplierInput, setMedSupplierInput] = useState('');
 
-  const submitAddMedicine = (e) => {
+  const submitAddMedicine = async (e) => {
     e.preventDefault();
     if (!medNameInput.trim() || !medBatchInput.trim()) return;
     const qtyVal = parseInt(medQtyInput) || 10;
@@ -230,32 +318,35 @@ export function useRackController(role) {
       alert(`Capacity exceeded! Maximum allowed space left: ${activeCompartment.maxCapacity - activeCompartmentUsage} units.`);
       return;
     }
-    const newMed = {
-      id: `MED-${Date.now().toString().slice(-3)}`,
-      name: medNameInput.trim(),
-      brandName: medBrandInput.trim() || medNameInput.trim(),
-      batchNumber: medBatchInput.trim().toUpperCase(),
-      quantity: qtyVal, unit: medUnitInput,
-      supplier: medSupplierInput || 'Generic Supplier',
-      addedBy: role || 'Admin',
-      addedDate: new Date().toISOString().substring(0, 10),
-      compartmentId: selectedCompId
-    };
-    setStoredMedicines(prev => [...prev, newMed]);
-    setCompartments(prev => prev.map(c => {
-      if (c.id === selectedCompId) {
-        const nextUsage = getCompartmentUsage(selectedCompId) + qtyVal;
-        return { ...c, status: nextUsage >= c.maxCapacity ? 'Full' : 'Active' };
-      }
-      return c;
-    }));
-    addNotification(`Medicine successfully allocated: ${newMed.name} to ${activeCompartment.name}`);
-    addNotification('Capacity updated successfully');
-    if (activeCompartmentUsage + qtyVal >= activeCompartment.maxCapacity) {
-      addNotification(`Rack ${activeCompartment.name} is full`);
+
+    const existingMed = dbAllMedicines.find(
+      m => (m.name || '').toLowerCase() === medNameInput.trim().toLowerCase() ||
+           (m.brandName || '').toLowerCase() === medNameInput.trim().toLowerCase() ||
+           (m.medicineName || '').toLowerCase() === medNameInput.trim().toLowerCase()
+    );
+
+    if (!existingMed) {
+      alert(`Medicine "${medNameInput}" not found in the database. Please add it to the Medicine Master catalog first.`);
+      return;
     }
-    setActiveModal(null);
-    setMedNameInput(''); setMedBrandInput(''); setMedBatchInput(''); setMedSupplierInput('');
+
+    try {
+      await racksAPI.allocate({
+        compartmentId: selectedCompId,
+        medicineId: existingMed.id,
+        qty: qtyVal,
+        batchNumber: medBatchInput.trim().toUpperCase(),
+        unit: medUnitInput,
+        rackId: selectedRackId
+      });
+      await refetch();
+      addNotification(`Medicine successfully allocated: ${existingMed.name || existingMed.medicineName} to ${activeCompartment.name}`);
+      addNotification('Capacity updated successfully');
+      setActiveModal(null);
+      setMedNameInput(''); setMedBrandInput(''); setMedBatchInput(''); setMedSupplierInput('');
+    } catch (err) {
+      alert('Error allocating medicine to rack: ' + err.message);
+    }
   };
 
   // ──────────────────────────────────────────────────────────
@@ -286,13 +377,11 @@ export function useRackController(role) {
     else { setXMedName(''); setXBatch(''); }
   };
 
-  const submitRackToRack = (e) => {
+  const submitRackToRack = async (e) => {
     e.preventDefault();
     const qtyVal = parseInt(xQty);
     const sourceComp = compartments.find(c => c.id === xFromComp);
     const destComp = compartments.find(c => c.id === xToComp);
-    const sourceRackObj = racks.find(r => r.id === xFromRack);
-    const destRackObj = racks.find(r => r.id === xToRack);
     if (!sourceComp || !destComp || !xMedName.trim() || isNaN(qtyVal) || qtyVal <= 0) return;
     const sourceMed = storedMedicines.find(m => m.compartmentId === xFromComp && m.name === xMedName);
     if (!sourceMed || sourceMed.quantity < qtyVal) {
@@ -302,70 +391,71 @@ export function useRackController(role) {
     if (destUsage + qtyVal > destComp.maxCapacity) {
       alert(`Destination capacity exceeded. Space available: ${destComp.maxCapacity - destUsage} units.`); return;
     }
-    setStoredMedicines(prev => prev.map(m => m.compartmentId === xFromComp && m.name === xMedName ? { ...m, quantity: m.quantity - qtyVal } : m).filter(m => m.quantity > 0));
-    setStoredMedicines(prev => {
-      const exists = prev.find(m => m.compartmentId === xToComp && m.name === xMedName);
-      if (exists) return prev.map(m => m.compartmentId === xToComp && m.name === xMedName ? { ...m, quantity: m.quantity + qtyVal } : m);
-      return [...prev, { id: `MED-${Date.now().toString().slice(-3)}`, name: sourceMed.name, brandName: sourceMed.brandName, batchNumber: sourceMed.batchNumber || xBatch || 'B-GENERIC', quantity: qtyVal, unit: sourceMed.unit, supplier: sourceMed.supplier, addedBy: role || 'Admin', addedDate: new Date().toISOString().substring(0, 10), compartmentId: xToComp }];
-    });
-    setCompartments(prev => prev.map(c => {
-      if (c.id === xFromComp) return { ...c, status: 'Active' };
-      if (c.id === xToComp) { const nextUsage = getCompartmentUsage(xToComp) + qtyVal; return { ...c, status: nextUsage >= c.maxCapacity ? 'Full' : 'Active' }; }
-      return c;
-    }));
-    const newTxn = {
-      transactionId: `TXN-RR-${Date.now().toString().slice(-3)}`,
-      transferType: 'Rack to Rack',
-      source: `${sourceRackObj?.name} (${sourceComp.name})`,
-      destination: `${destRackObj?.name} (${destComp.name})`,
-      medicineName: xMedName, batchNumber: sourceMed.batchNumber || 'B-GENERIC',
-      quantity: qtyVal, doneBy: role || 'Admin',
-      dateTime: new Date().toISOString().replace('T', ' ').substring(0, 16), status: 'Completed'
-    };
-    setTransferHistory(prev => [newTxn, ...prev]);
-    addNotification('Stock transferred successfully');
-    addNotification(`Stock moved from ${sourceComp.name} to ${destComp.name}`);
-    addNotification('Capacity updated successfully');
-    if (getCompartmentUsage(xToComp) + qtyVal >= destComp.maxCapacity) addNotification(`Rack ${destComp.name} is full`);
-    setActiveModal(null);
+
+    try {
+      const res = await racksAPI.transfer({
+        sourceCompId: xFromComp,
+        destCompId: xToComp,
+        medicineId: sourceMed.medicineId,
+        medicineName: sourceMed.name,
+        qty: qtyVal,
+        transferredBy: role || 'Admin',
+        batchNumber: sourceMed.batchNumber,
+        remarks: xRemarks || 'Rack to Rack Transfer'
+      });
+
+      if (res.success) {
+        await refetch();
+        addNotification('Stock transferred successfully');
+        addNotification(`Stock moved from ${sourceComp.name} to ${destComp.name}`);
+        addNotification('Capacity updated successfully');
+        setActiveModal(null);
+      }
+    } catch (err) {
+      alert('Error transferring stock: ' + err.message);
+    }
   };
 
-  const submitRackToWarehouse = (e) => {
+  const submitRackToWarehouse = async (e) => {
     e.preventDefault();
     const qtyVal = parseInt(xQty);
     const sourceComp = compartments.find(c => c.id === xFromComp);
-    const sourceRackObj = racks.find(r => r.id === xFromRack);
     const whComp = compartments.find(c => c.id === xWHName);
     if (!sourceComp || !xMedName.trim() || isNaN(qtyVal) || qtyVal <= 0 || !whComp) return;
     const sourceMed = storedMedicines.find(m => m.compartmentId === xFromComp && m.name === xMedName);
     if (!sourceMed || sourceMed.quantity < qtyVal) {
       alert(`Insufficient stock. Available in ${sourceComp.name}: ${sourceMed ? sourceMed.quantity : 0} units.`); return;
     }
-    setStoredMedicines(prev => prev.map(m => m.compartmentId === xFromComp && m.name === xMedName ? { ...m, quantity: m.quantity - qtyVal } : m).filter(m => m.quantity > 0));
-    setStoredMedicines(prev => {
-      const exists = prev.find(m => m.compartmentId === xWHName && m.name === xMedName);
-      if (exists) return prev.map(m => m.compartmentId === xWHName && m.name === xMedName ? { ...m, quantity: m.quantity + qtyVal } : m);
-      return [...prev, { id: `MED-${Date.now().toString().slice(-3)}`, name: sourceMed.name, brandName: sourceMed.brandName, batchNumber: sourceMed.batchNumber, quantity: qtyVal, unit: sourceMed.unit, supplier: sourceMed.supplier, addedBy: role || 'Admin', addedDate: new Date().toISOString().substring(0, 10), compartmentId: xWHName }];
-    });
-    setCompartments(prev => prev.map(c => c.id === xFromComp ? { ...c, status: 'Active' } : c));
-    const newTxn = {
-      transactionId: `TXN-RW-${Date.now().toString().slice(-3)}`, transferType: 'Rack to Warehouse',
-      source: `${sourceRackObj?.name} (${sourceComp.name})`, destination: `Warehouse Storage (${whComp.name})`,
-      medicineName: xMedName, batchNumber: sourceMed.batchNumber, quantity: qtyVal,
-      doneBy: role || 'Admin', dateTime: new Date().toISOString().replace('T', ' ').substring(0, 16), status: 'Completed'
-    };
-    setTransferHistory(prev => [newTxn, ...prev]);
-    addNotification('Stock moved to warehouse successfully');
-    addNotification(`Stock moved from ${sourceComp.name} to Warehouse`);
-    addNotification('Capacity updated successfully');
-    setActiveModal(null);
+
+    try {
+      const res = await warehouseAPI.createTransfer({
+        transferType: 'Rack to Warehouse',
+        medicineId: sourceMed.medicineId,
+        medicineName: sourceMed.name,
+        fromLocation: xFromComp,
+        toRack: '00000000-0000-0000-0000-000000000001',
+        qty: qtyVal,
+        transferredBy: role || 'Admin',
+        remarks: xRemarks || 'Rack to Warehouse Transfer',
+        batchNumber: sourceMed.batchNumber
+      });
+
+      if (res.success) {
+        await refetch();
+        addNotification('Stock moved to warehouse successfully');
+        addNotification(`Stock moved from ${sourceComp.name} to Warehouse`);
+        addNotification('Capacity updated successfully');
+        setActiveModal(null);
+      }
+    } catch (err) {
+      alert('Error transferring stock to warehouse: ' + err.message);
+    }
   };
 
-  const submitWarehouseToRack = (e) => {
+  const submitWarehouseToRack = async (e) => {
     e.preventDefault();
     const qtyVal = parseInt(xQty);
     const destComp = compartments.find(c => c.id === xToComp);
-    const destRackObj = racks.find(r => r.id === xToRack);
     const whComp = compartments.find(c => c.id === xWHName);
     if (!destComp || !xMedName.trim() || isNaN(qtyVal) || qtyVal <= 0 || !whComp) return;
     const sourceMed = storedMedicines.find(m => m.compartmentId === xWHName && m.name === xMedName);
@@ -376,28 +466,30 @@ export function useRackController(role) {
     if (destUsage + qtyVal > destComp.maxCapacity) {
       alert(`Destination capacity exceeded. Space available: ${destComp.maxCapacity - destUsage} units.`); return;
     }
-    setStoredMedicines(prev => prev.map(m => m.compartmentId === xWHName && m.name === xMedName ? { ...m, quantity: m.quantity - qtyVal } : m).filter(m => m.quantity > 0));
-    setStoredMedicines(prev => {
-      const exists = prev.find(m => m.compartmentId === xToComp && m.name === xMedName);
-      if (exists) return prev.map(m => m.compartmentId === xToComp && m.name === xMedName ? { ...m, quantity: m.quantity + qtyVal } : m);
-      return [...prev, { id: `MED-${Date.now().toString().slice(-3)}`, name: sourceMed.name, brandName: sourceMed.brandName, batchNumber: sourceMed.batchNumber, quantity: qtyVal, unit: sourceMed.unit, supplier: sourceMed.supplier, addedBy: role || 'Admin', addedDate: new Date().toISOString().substring(0, 10), compartmentId: xToComp }];
-    });
-    setCompartments(prev => prev.map(c => {
-      if (c.id === xToComp) { const nextUsage = getCompartmentUsage(xToComp) + qtyVal; return { ...c, status: nextUsage >= c.maxCapacity ? 'Full' : 'Active' }; }
-      return c;
-    }));
-    const newTxn = {
-      transactionId: `TXN-WR-${Date.now().toString().slice(-3)}`, transferType: 'Warehouse to Rack',
-      source: `Warehouse Storage (${whComp.name})`, destination: `${destRackObj?.name} (${destComp.name})`,
-      medicineName: xMedName, batchNumber: sourceMed.batchNumber, quantity: qtyVal,
-      doneBy: role || 'Admin', dateTime: new Date().toISOString().replace('T', ' ').substring(0, 16), status: 'Completed'
-    };
-    setTransferHistory(prev => [newTxn, ...prev]);
-    addNotification('Stock moved from warehouse to rack successfully');
-    addNotification(`Stock moved from Warehouse to ${destComp.name}`);
-    addNotification('Capacity updated successfully');
-    if (getCompartmentUsage(xToComp) + qtyVal >= destComp.maxCapacity) addNotification(`Rack ${destComp.name} is full`);
-    setActiveModal(null);
+
+    try {
+      const res = await warehouseAPI.createTransfer({
+        transferType: 'Warehouse to Rack',
+        medicineId: sourceMed.medicineId,
+        medicineName: sourceMed.name,
+        fromLocation: '00000000-0000-0000-0000-000000000001',
+        toRack: xToComp,
+        qty: qtyVal,
+        transferredBy: role || 'Admin',
+        remarks: xRemarks || 'Warehouse to Rack Transfer',
+        batchNumber: sourceMed.batchNumber
+      });
+
+      if (res.success) {
+        await refetch();
+        addNotification('Stock moved from warehouse to rack successfully');
+        addNotification(`Stock moved from Warehouse to ${destComp.name}`);
+        addNotification('Capacity updated successfully');
+        setActiveModal(null);
+      }
+    } catch (err) {
+      alert('Error transferring stock from warehouse: ' + err.message);
+    }
   };
 
   // ──────────────────────────────────────────────────────────
@@ -408,7 +500,7 @@ export function useRackController(role) {
   const [reqReason, setReqReason] = useState('');
   const [reqRackId, setReqRackId] = useState('COMP-A1');
 
-  const submitStockRequest = (e) => {
+  const submitStockRequest = async (e) => {
     e.preventDefault();
     if (!reqMedName.trim() || !reqQty || parseInt(reqQty) <= 0) {
       alert('Please fill in medicine name and a valid quantity.'); return;
@@ -417,30 +509,23 @@ export function useRackController(role) {
     const rackLabel = compartments.find(c => c.id === reqRackId)?.name || reqRackId;
     const message = `📦 Stock Request: Rack [${rackLabel}] requested ${qtyVal} units of "${reqMedName.trim()}" from Warehouse. Reason: ${reqReason.trim() || 'Low stock'}`;
 
-    // Push to global DB notifications — visible in Warehouse Alert Feed
-    pushGlobalNotification(message, 'warning');
+    try {
+      // Create server-side notification
+      await notificationsAPI.create({
+        type: 'warning',
+        message: message,
+        resolved: false
+      });
 
-    // Add local rack notification too
-    addNotification(`Stock request sent: ${qtyVal} units of ${reqMedName.trim()}`);
-
-    // Log the transfer history as a pending request
-    const newTxn = {
-      transactionId: `TXN-REQ-${Date.now().toString().slice(-4)}`,
-      transferType: 'Stock Request to Warehouse',
-      source: `Rack [${rackLabel}]`,
-      destination: 'Warehouse',
-      medicineName: reqMedName.trim(),
-      batchNumber: 'PENDING',
-      quantity: qtyVal,
-      doneBy: role || 'Admin',
-      dateTime: new Date().toISOString().replace('T', ' ').substring(0, 16),
-      status: 'Pending Approval'
-    };
-    setTransferHistory(prev => [newTxn, ...prev]);
-
-    alert(`✅ Stock request for ${qtyVal} units of "${reqMedName.trim()}" has been submitted to Warehouse Management. The warehouse admin will be notified.`);
-    setActiveModal(null);
-    setReqMedName(''); setReqQty('50'); setReqReason('');
+      // Also request transfer (logs as request/pending if applicable)
+      await refetch();
+      addNotification(`Stock request sent: ${qtyVal} units of ${reqMedName.trim()}`);
+      alert(`✅ Stock request for ${qtyVal} units of "${reqMedName.trim()}" has been submitted to Warehouse Management. The warehouse admin will be notified.`);
+      setActiveModal(null);
+      setReqMedName(''); setReqQty('50'); setReqReason('');
+    } catch (err) {
+      alert('Error submitting stock request: ' + err.message);
+    }
   };
 
   // ──────────────────────────────────────────────────────────

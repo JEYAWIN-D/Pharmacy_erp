@@ -1,5 +1,6 @@
 import { supplierRepository } from './supplier.repository.js';
 import { AppError } from '../../shared/errors/AppError.js';
+import prisma from '../../config/prisma.js';
 
 // Auto-generate supplier code like SUP-001, SUP-002
 const generateCode = async () => {
@@ -525,5 +526,104 @@ export const supplierService = {
   // ─── AUDIT LOGS ───────────────────────────────────────────────────────────
   getAuditLogs: async (supplierId) => {
     return supplierRepository.findAuditLogs(supplierId);
+  },
+
+  getMedicineMappings: async ({ supplierId, medicineId }) => {
+    const where = {};
+    if (supplierId) where.supplierId = supplierId;
+    if (medicineId) where.medicineId = medicineId;
+    return prisma.medicineSupplierMapping.findMany({
+      where,
+      include: {
+        medicine: true,
+        supplier: true
+      }
+    });
+  },
+
+  createMedicineMapping: async (data) => {
+    const { supplierId, medicineId, isDefault, purchasePrice, leadTimeDays, minOrderQty, status } = data;
+    
+    // Check if mapping already exists
+    const existing = await prisma.medicineSupplierMapping.findFirst({
+      where: { supplierId, medicineId }
+    });
+    if (existing) {
+      throw new AppError('Mapping between this supplier and medicine already exists', 400);
+    }
+
+    // If isDefault is true, set all other mappings for this medicine to default = false
+    if (isDefault) {
+      await prisma.medicineSupplierMapping.updateMany({
+        where: { medicineId, isDefault: true },
+        data: { isDefault: false }
+      });
+      // Also update default supplier in the Medicine model
+      await prisma.medicine.update({
+        where: { id: medicineId },
+        data: { supplierId }
+      });
+    }
+
+    return prisma.medicineSupplierMapping.create({
+      data: {
+        supplierId,
+        medicineId,
+        isDefault: !!isDefault,
+        purchasePrice: parseFloat(purchasePrice),
+        leadTimeDays: parseInt(leadTimeDays) || 3,
+        minOrderQty: parseInt(minOrderQty) || 1,
+        status: status || 'Active'
+      },
+      include: {
+        medicine: true,
+        supplier: true
+      }
+    });
+  },
+
+  updateMedicineMapping: async (id, data) => {
+    const { isDefault, purchasePrice, leadTimeDays, minOrderQty, status } = data;
+    
+    const mapping = await prisma.medicineSupplierMapping.findUnique({
+      where: { id }
+    });
+    if (!mapping) throw new AppError('Mapping not found', 404);
+
+    if (isDefault) {
+      await prisma.medicineSupplierMapping.updateMany({
+        where: { medicineId: mapping.medicineId, isDefault: true, id: { not: id } },
+        data: { isDefault: false }
+      });
+      await prisma.medicine.update({
+        where: { id: mapping.medicineId },
+        data: { supplierId: mapping.supplierId }
+      });
+    }
+
+    const updateData = {};
+    if (isDefault !== undefined) updateData.isDefault = !!isDefault;
+    if (purchasePrice !== undefined) {
+      updateData.purchasePrice = parseFloat(purchasePrice);
+      updateData.lastPurchasePrice = mapping.purchasePrice;
+    }
+    if (leadTimeDays !== undefined) updateData.leadTimeDays = parseInt(leadTimeDays) || 3;
+    if (minOrderQty !== undefined) updateData.minOrderQty = parseInt(minOrderQty) || 1;
+    if (status !== undefined) updateData.status = status;
+
+    return prisma.medicineSupplierMapping.update({
+      where: { id },
+      data: updateData,
+      include: {
+        medicine: true,
+        supplier: true
+      }
+    });
+  },
+
+  deleteMedicineMapping: async (id) => {
+    const mapping = await prisma.medicineSupplierMapping.findUnique({ where: { id } });
+    if (!mapping) throw new AppError('Mapping not found', 404);
+    return prisma.medicineSupplierMapping.delete({ where: { id } });
   }
 };

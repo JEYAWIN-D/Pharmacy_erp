@@ -3,7 +3,8 @@ import {
   medicinesAPI, categoriesAPI, manufacturersAPI, suppliersAPI, batchesAPI,
   racksAPI, warehouseAPI, purchaseAPI, prescriptionsAPI, dispensingAPI,
   billingAPI, returnsAPI, customersAPI, notificationsAPI, inventoryAPI,
-  expiryAPI, coldStorageAPI, administrationAPI, outletsAPI, dashboardAPI
+  expiryAPI, coldStorageAPI, administrationAPI, outletsAPI, dashboardAPI,
+  medicineTypesAPI
 } from './api.js';
 
 const DBContext = createContext(null);
@@ -55,6 +56,11 @@ export function DBProvider({ children }) {
   const [supplierLedger, setSupplierLedger] = useState([]);
   const [currentTemp, setCurrentTemp] = useState(4.2);
   const [tempLogs, setTempLogs] = useState([]);
+  const [medicineStatuses, setMedicineStatuses] = useState([]);
+  const [supplierMappings, setSupplierMappings] = useState([]);
+  const [coldStorageStock, setColdStorageStock] = useState([]);
+  const [financePayments, setFinancePayments] = useState([]);
+  const [medicineTypes, setMedicineTypes] = useState([]);
 
   // ─── LOADING & ERROR STATE ─────────────────────────────────────────────────
   const [loading, setLoading] = useState(true);
@@ -99,7 +105,12 @@ export function DBProvider({ children }) {
         administrationAPI.getAuditLogs(),
         administrationAPI.getSupplierInvoices(),
         administrationAPI.getSupplierPayments(),
-        administrationAPI.getSupplierLedger()
+        administrationAPI.getSupplierLedger(),
+        medicinesAPI.getStatuses(),
+        suppliersAPI.getMedicineMappings(),
+        coldStorageAPI.getStock(),
+        administrationAPI.getFinancePayments(),
+        medicineTypesAPI.getAll()
       ]);
 
       // Smart extractor: handles both flat {data:[]} and nested paginated {data:{suppliers:[], pagination:{}}}
@@ -147,7 +158,14 @@ export function DBProvider({ children }) {
       setMedicinesState(mappedMedicines);
 
       setSuppliers(getValue(results[3]));
-      setBatches(getValue(results[4]));
+      const rawBatches = getValue(results[4], []);
+      const mappedBatches = rawBatches.map(b => ({
+        ...b,
+        stock: Number(b.stock ?? b.stockQty ?? 0),
+        mrp: Number(b.mrp ?? 0),
+        purchasePrice: Number(b.purchasePrice ?? 0),
+      }));
+      setBatches(mappedBatches);
       setRacks(getValue(results[5]));
       setWarehouseStock(getValue(results[6]));
       setStockTransfers(getValue(results[7]));
@@ -174,6 +192,11 @@ export function DBProvider({ children }) {
       setSupplierInvoices(getValue(results[25]));
       setSupplierPayments(getValue(results[26]));
       setSupplierLedger(getValue(results[27]));
+      setMedicineStatuses(getValue(results[28]));
+      setSupplierMappings(getValue(results[29]));
+      setColdStorageStock(getValue(results[30]));
+      setFinancePayments(getValue(results[31]));
+      setMedicineTypes(getValue(results[32]));
     } catch (err) {
       setApiError(err.message);
       console.error('DBContext fetchAll error:', err);
@@ -258,7 +281,13 @@ export function DBProvider({ children }) {
       supplierLedger, setSupplierLedger,
       // Cold Storage
       currentTemp, setCurrentTemp,
-      tempLogs, setTempLogs
+      tempLogs, setTempLogs,
+      // New Modules
+      medicineStatuses, setMedicineStatuses,
+      supplierMappings, setSupplierMappings,
+      coldStorageStock, setColdStorageStock,
+      financePayments, setFinancePayments,
+      medicineTypes, setMedicineTypes
     }}>
       {children}
     </DBContext.Provider>

@@ -6,4 +6,6 @@ router.use(authenticate);
 router.get('/logs', coldStorageController.getLogs);
 router.get('/latest', coldStorageController.getLatest);
 router.post('/record', coldStorageController.record);
+router.get('/stock', coldStorageController.getStock);
+router.put('/stock/:id', coldStorageController.updateStockRecord);
 export default router;

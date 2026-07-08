@@ -1,0 +1,44 @@
+[GET /api/suppliers/purchase-orders] Error: PrismaClientValidationError: 
+Invalid `prisma.purchaseOrder.findMany()` invocation:
+
+{
+  where: {},
+  include: {
+    items: true,
+    supplier: {
+      select: {
+        id: true,
+        name: true,
+        code: true
+      }
+    }
+  },
+  orderBy: {
+    orderDate: "desc",
+    ~~~~~~~~~
+?   id?: SortOrder,
+?   supplierId?: SortOrder | SortOrderInput,
+?   prId?: SortOrder | SortOrderInput,
+?   poDate?: SortOrder,
+?   poTime?: SortOrder | SortOrderInput,
+?   status?: SortOrder,
+?   subtotal?: SortOrder,
+?   total?: SortOrder,
+?   paymentTerms?: SortOrder | SortOrderInput,
+?   communicationMethod?: SortOrder | SortOrderInput,
+?   createdBy?: SortOrder | SortOrderInput,
+?   updatedAt?: SortOrder,
+?   createdAt?: SortOrder,
+?   grns?: GRNOrderByRelationAggregateInput,
+?   items?: PurchaseOrderItemOrderByRelationAggregateInput,
+?   supplier?: SupplierOrderByWithRelationInput
+  }
+}
+
+Unknown argument `orderDate`. Available options are marked with ?.
+    at Nn (D:\MY PROJECTS\Pharmacy_erp\Pharmacy_Backend\node_modules\@prisma\client\runtime\library.js:29:1363)
+    at ei.handleRequestError (D:\MY PROJECTS\Pharmacy_erp\Pharmacy_Backend\node_modules\@prisma\client\runtime\library.js:121:6911)
+    at ei.handleAndLogRequestError (D:\MY PROJECTS\Pharmacy_erp\Pharmacy_Backend\node_modules\@prisma\client\runtime\library.js:121:6593)
+    at ei.request (D:\MY PROJECTS\Pharmacy_erp\Pharmacy_Backend\node_modules\@prisma\client\runtime\library.js:121:6300)
+    at async a (D:\MY PROJECTS\Pharmacy_erp\Pharmacy_Backend\node_modules\@prisma\client\runtime\library.js:130:9551)
+    at async getPurchaseOrders (file:///D:/MY%20PROJECTS/Pharmacy_erp/Pharmacy_Backend/src/modules/suppliers/supplier.controller.js:342:20)
