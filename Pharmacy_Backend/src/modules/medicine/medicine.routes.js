@@ -23,6 +23,8 @@ const adminRoles = ['Super Admin', 'Admin'];
 // ── CRUD ───────────────────────────────────────────────────────
 router.post('/',   authorize(...writeRoles), medicineValidation, create);
 
+router.get('/statuses', authorize(...readRoles), medicineController.getStatuses);
+
 router.get('/',    authorize(...readRoles),  queryParamsValidation, getAll);
 
 router.get('/:id', authorize(...readRoles),  getById);

@@ -73,6 +73,12 @@ router.get('/purchase-orders', supplierController.getPurchaseOrders);
 router.post('/purchase-orders', supplierController.createPurchaseOrder);
 router.put('/purchase-orders/:id/status', supplierController.updatePurchaseOrderStatus);
 
+// ─── MEDICINE SUPPLIER MAPPINGS ────────────────────────────────────────────
+router.get('/medicine-mappings', supplierController.getMedicineMappings);
+router.post('/medicine-mappings', supplierController.createMedicineMapping);
+router.put('/medicine-mappings/:id', supplierController.updateMedicineMapping);
+router.delete('/medicine-mappings/:id', supplierController.deleteMedicineMapping);
+
 // ─── SUPPLIER MASTER CRUD ──────────────────────────────────────────────────
 router.get('/', supplierController.getAll);
 router.get('/:id', supplierController.getById);

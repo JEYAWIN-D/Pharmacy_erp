@@ -8,7 +8,14 @@ export const batchRepository = {
     const where = { isDeleted: false };
     if (medicineId) where.medicineId = medicineId;
     if (status) where.status = status;
-    const query = { where, include: { medicine: { select: { medicineName: true, skuCode: true } } }, orderBy: { expiryDate: 'asc' } };
+    const query = {
+      where,
+      include: {
+        medicine: { select: { medicineName: true, skuCode: true } },
+        supplier: { select: { id: true, name: true } }
+      },
+      orderBy: { expiryDate: 'asc' }
+    };
     if (skip !== undefined && take !== undefined) { query.skip = skip; query.take = take; }
     const [data, total] = await Promise.all([
       prisma.medicineBatch.findMany(query),
@@ -19,7 +26,7 @@ export const batchRepository = {
 
   findById: async (id) => prisma.medicineBatch.findFirst({
     where: { id, isDeleted: false },
-    include: { medicine: true }
+    include: { medicine: true, supplier: true, grn: true }
   }),
 
   findExpiring: async (days) => {

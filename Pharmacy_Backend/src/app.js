@@ -27,6 +27,12 @@ app.use(express.json());
 app.use('/api', routes);
 
 app.use((err, req, res, next) => {
+  try {
+    import('fs').then(fs => {
+      fs.writeFileSync('./error.log', `[${req.method} ${req.url}] Error: ${err.stack || String(err)}`);
+    });
+  } catch (e) {}
+
 	const statusCode = err.statusCode || 500;
 	const response = {
 		success: false,

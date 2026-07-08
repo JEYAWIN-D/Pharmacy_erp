@@ -53,6 +53,9 @@ export const supplierRepository = {
         supplierBrandMappings: true,
         purchaseTerms: { where: { isActive: true } },
         supplierDocuments: true,
+        supplierMappings: { include: { medicine: true } },
+        financeSupplierPayments: true,
+        purchaseOrders: { include: { items: true }, orderBy: { createdAt: 'desc' } },
         _count: {
           select: {
             supplierInvoices: true,

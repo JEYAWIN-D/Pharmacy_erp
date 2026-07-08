@@ -20,3 +20,6 @@ export const createCompartment = async (req, res, next) => {
 export const transferStock = async (req, res, next) => {
   try { const t = await rackService.transferStock(req.body); res.status(201).json({ success: true, data: t }); } catch (e) { next(e); }
 };
+export const allocateStock = async (req, res, next) => {
+  try { const r = await rackService.allocateStock(req.body); res.status(201).json({ success: true, data: r }); } catch (e) { next(e); }
+};

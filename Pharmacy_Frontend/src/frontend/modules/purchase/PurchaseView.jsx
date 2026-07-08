@@ -8,7 +8,6 @@ import {
   ArrowRight, Check, Play, Edit3, Trash, Info, RefreshCw, Edit, ChevronRight
 } from 'lucide-react';
 import { usePurchaseController } from './usePurchaseController';
-import { usePurchaseRequestController } from './usePurchaseRequestController';
 import { useGRNController } from './useGRNController';
 import { purchaseAPI } from '../../db/api.js';
 import { useToast } from '../billing/useToast';
@@ -247,36 +246,12 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
       return { stage: 'GRN Pending', actionText: 'Create/View GRN', tab: 'grn', subView: 'create', id: activePOForGRN.id };
     }
 
-    const activeShipment = shipments.find(sh =>
-      sh.status !== 'Delivered' &&
-      sh.items?.some(it => it.medicineId === medicineId)
-    );
-    if (activeShipment) {
-      return { stage: 'Shipment Started', actionText: 'Track Shipment', tab: 'shipments', subView: 'list', id: activeShipment.id };
-    }
-
-    const activePOShipped = purchaseOrders.find(po =>
-      ['Shipped', 'In Transit'].includes(po.status) &&
-      po.items?.some(it => it.medicineId === medicineId)
-    );
-    if (activePOShipped) {
-      return { stage: 'Shipment Started', actionText: 'Track Shipment', tab: 'shipments', subView: 'list', id: activePOShipped.id };
-    }
-
     const activePO = purchaseOrders.find(po =>
-      ['Draft', 'Sent', 'Accepted'].includes(po.status) &&
+      ['Draft', 'Sent', 'Accepted', 'Shipped', 'In Transit'].includes(po.status) &&
       po.items?.some(it => it.medicineId === medicineId)
     );
     if (activePO) {
       return { stage: 'Purchase Order Created', actionText: 'View Purchase Order', tab: 'po', subView: 'details', id: activePO.id };
-    }
-
-    const activePR = purchaseRequests.find(pr =>
-      ['Pending', 'Approved', 'Partially Approved'].includes(pr.status) &&
-      pr.items?.some(it => it.medicineId === medicineId)
-    );
-    if (activePR) {
-      return { stage: 'Purchase Request Created', actionText: 'View Purchase Request', tab: 'pr', subView: 'details', id: activePR.id };
     }
 
     const completedPO = completedPOs.find(po =>
@@ -286,7 +261,7 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
       return { stage: 'Completed', actionText: 'View Procurement History', tab: 'completed', subView: 'list', id: completedPO.id };
     }
 
-    return { stage: 'Low Stock', actionText: 'Create Purchase Request', tab: 'pr', subView: 'create', id: null };
+    return { stage: 'Low Stock', actionText: 'Create Purchase Order', tab: 'po', subView: 'create', id: null };
   };
 
   const getPOTraceTimeline = (po) => {
@@ -325,32 +300,16 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
     linkedPRId, setLinkedPRId,
     prApprovedItems, setPrApprovedItems,
     handleCreatePOFromPR,
-    shipments,
     completedPOs,
     completedGRNs,
     loadingHistory,
-    handleCreateShipment,
-    handleUpdateShipmentStatus,
     refreshHistory
   } = usePurchaseController(role);
-
-  const {
-    purchaseRequests,
-    newPR, setNewPR,
-    addPRItem,
-    removePRItem,
-    updatePRItem,
-    handleCreateRequest,
-    handleAutoCreatePR,
-    handleApprovePR,
-    handleRejectPR
-  } = usePurchaseRequestController(role);
 
   const {
     goodsReceipts,
     pendingGRNOrders,
     selectedPOId, setSelectedPOId,
-    selectedShipmentId, setSelectedShipmentId,
     grnItems, setGrnItems,
     receivedBy, setReceivedBy,
     invoiceNumber, setInvoiceNumber,
@@ -364,14 +323,12 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
   } = useGRNController();
 
   // Navigation states for the 13 required pages
-  const [currentTab, setCurrentTab] = useState('dashboard'); // dashboard, pr, po, shipments, grn, completed
+  const [currentTab, setCurrentTab] = useState('dashboard'); // dashboard, po, grn, completed
   const [currentSubView, setCurrentSubView] = useState('list'); // list, create, details
   
   // Selection states
-  const [selectedPRId, setSelectedPRId] = useState(null);
   const [selectedPOIdState, setSelectedPOIdState] = useState(null);
   const [selectedGRNIdState, setSelectedGRNIdState] = useState(null);
-  const [selectedShipmentIdState, setSelectedShipmentIdState] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const [directMedicineId, setDirectMedicineId] = useState('');
   const [directQty, setDirectQty] = useState('50');
@@ -451,6 +408,16 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
   useEffect(() => {
     fetchLowStock();
   }, [fetchLowStock, purchaseOrders]);
+
+  useEffect(() => {
+    const autoPoId = localStorage.getItem('auto_po_medicine_id');
+    if (autoPoId) {
+      localStorage.removeItem('auto_po_medicine_id');
+      setCurrentTab('po');
+      setCurrentSubView('create');
+      handleSelectDirectMedicine(autoPoId);
+    }
+  }, [medicines]);
 
   // Invoice Debounce Validation
   useEffect(() => {
@@ -784,16 +751,7 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 8;
 
-  // Local Shipment form state
-  const [shipmentForm, setShipmentForm] = useState({
-    poId: '',
-    trackingId: '',
-    invoiceNumber: '',
-    items: []
-  });
 
-  // Local PR item approval choices
-  const [prItemApprovals, setPrItemApprovals] = useState({}); // { itemId: 'Approved' | 'Rejected' }
 
 
 
@@ -824,10 +782,7 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
     setEditingDraftId(null);
   };
 
-  // Safe selection lookups with fallback checks to prevent white screen crashes
-  const selectedPR = useMemo(() => {
-    return purchaseRequests.find(p => p.id === selectedPRId) || null;
-  }, [purchaseRequests, selectedPRId]);
+
 
   const selectedPO = useMemo(() => {
     return purchaseOrders.find(p => p.id === selectedPOIdState) || 
@@ -839,34 +794,13 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
            completedGRNs.find(g => g.id === selectedGRNIdState) || null;
   }, [goodsReceipts, completedGRNs, selectedGRNIdState]);
 
-  const selectedShipment = useMemo(() => {
-    return shipments.find(s => s.id === selectedShipmentIdState) || null;
-  }, [shipments, selectedShipmentIdState]);
 
-  const [prItemRemarks, setPrItemRemarks] = useState({});
-
-  // Auto-prefill item approval choices when selected PR changes
-  React.useEffect(() => {
-    if (selectedPR && selectedPR.items) {
-      const decisions = {};
-      selectedPR.items.forEach(it => {
-        decisions[it.id] = it.status || 'Pending';
-      });
-      setPrItemApprovals(decisions);
-    } else {
-      setPrItemApprovals({});
-    }
-  }, [selectedPR]);
 
   // Alert & dashboard stats
-  const pendingRequestsCount = purchaseRequests.filter(r => r.status === 'Pending').length;
-  const approvedRequestsCount = purchaseRequests.filter(r => r.status === 'Approved' || r.status === 'Partially Approved').length;
-  const inProgressOrdersCount = purchaseOrders.filter(p => ['Sent', 'Accepted', 'Shipped', 'In Transit', 'Delivered'].includes(p.status)).length;
-  const pendingShipmentsCount = shipments.filter(s => s.status !== 'Delivered').length;
+  // pendingPOCount: All active POs not yet completed or cancelled
   const pendingPOCount = purchaseOrders.filter(p => !['COMPLETED', 'Completed', 'Closed', 'CANCELLED', 'Cancelled', 'Rejected'].includes(p.status)).length;
-  const totalPendingGRNCount = pendingGRNOrders.length + goodsReceipts.filter(g => g.status === 'Draft' || g.savedAsDraft).length;
-  const partiallyReceivedCount = purchaseOrders.filter(p => p.status === 'Partially Received').length;
-  const completedPOCount = completedPOs.length;
+  // totalPendingGRNCount: only count the POs that are pending GRN receiving or partially received
+  const totalPendingGRNCount = pendingGRNOrders.length;
 
   // Filter low stock medicines from master inventory list (read-only alerts)
   const lowStockAlerts = useMemo(() => {
@@ -911,15 +845,19 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
     });
   }, [lowStockItems, filters.dashboard]);
 
+  // Per-tab PO counts for badge display
+  const poTabCounts = useMemo(() => ({
+    'Pending': purchaseOrders.filter(p => ['PO_GENERATED', 'Draft', 'Pending Approval', 'Pending'].includes(p.status)).length,
+    'Accepted': purchaseOrders.filter(p => p.status === 'Accepted').length,
+    'Approved': purchaseOrders.filter(p => ['Approved', 'PO_CONFIRMED', 'Sent'].includes(p.status)).length,
+    'Partially Received': purchaseOrders.filter(p => ['PARTIALLY_RECEIVED', 'Partially Received', 'Shipped', 'In Transit'].includes(p.status)).length,
+    'Completed': purchaseOrders.filter(p => ['COMPLETED', 'Completed', 'Closed'].includes(p.status)).length,
+    'Cancelled': purchaseOrders.filter(p => ['CANCELLED', 'Cancelled', 'Rejected'].includes(p.status)).length,
+  }), [purchaseOrders]);
+
   const filteredPurchaseOrders = useMemo(() => {
     return purchaseOrders.filter(po => {
       const { dateFrom, dateTo, supplier, medicine, unit, priceMin, priceMax, status, poId } = filters.po;
-      
-      const isAnyFilterActive = !!(dateFrom || dateTo || supplier || medicine || unit || priceMin || priceMax || status || poId);
-      if (!isAnyFilterActive) {
-        const recordTime = new Date(po.updatedAt || po.createdAt || po.poDate).getTime();
-        if (Date.now() - recordTime > 24 * 60 * 60 * 1000) return false;
-      }
       
       // Legacy Tab Status mapping combined with Advanced Status filter
       let currentStatusTab = poListTab; 
@@ -927,7 +865,9 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
 
       const poStatus = po.status;
       if (currentStatusTab === 'Pending' && !['PO_GENERATED', 'Draft', 'Pending Approval', 'Pending'].includes(poStatus)) return false;
-      if (currentStatusTab === 'Partially Received' && !['PARTIALLY_RECEIVED', 'Partially Received', 'Shipped', 'In Transit', 'PO_CONFIRMED', 'Sent', 'Accepted'].includes(poStatus)) return false;
+      if (currentStatusTab === 'Accepted' && poStatus !== 'Accepted') return false;
+      if (currentStatusTab === 'Approved' && !['Approved', 'PO_CONFIRMED', 'Sent'].includes(poStatus)) return false;
+      if (currentStatusTab === 'Partially Received' && !['PARTIALLY_RECEIVED', 'Partially Received', 'Shipped', 'In Transit'].includes(poStatus)) return false;
       if (currentStatusTab === 'Completed' && !['COMPLETED', 'Completed', 'Closed'].includes(poStatus)) return false;
       if (currentStatusTab === 'Cancelled' && !['CANCELLED', 'Cancelled', 'Rejected'].includes(poStatus)) return false;
 
@@ -952,19 +892,25 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
       // Unit Filter
       if (unit && !po.items?.some(it => (it.unit || '').toLowerCase().includes(unit.toLowerCase()))) return false;
 
+      // If no advanced filters are active, enforce 24‑hour recency filter
+      const isAnyFilterActive = !!(dateFrom || dateTo || supplier || medicine || unit || priceMin || priceMax || status || poId);
+      if (!isAnyFilterActive) {
+        const recordTime = new Date(po.createdAt || po.updatedAt || po.poDate).getTime();
+        if (Date.now() - recordTime > 24 * 60 * 60 * 1000) return false;
+      }
       return true;
     });
   }, [purchaseOrders, poListTab, filters.po]);
 
+  // Per-tab GRN counts for badge display
+  const grnTabCounts = useMemo(() => ({
+    'Draft': goodsReceipts.filter(g => g.savedAsDraft === true || g.status === 'Draft').length,
+    'Completed': goodsReceipts.filter(g => g.savedAsDraft !== true && g.status !== 'Draft').length,
+  }), [goodsReceipts]);
+
   const filteredGoodsReceipts = useMemo(() => {
     return goodsReceipts.filter(grn => {
       const { dateFrom, dateTo, supplier, medicine, invoice, poId, status, unit } = filters.grn;
-      
-      const isAnyFilterActive = !!(dateFrom || dateTo || supplier || medicine || invoice || poId || status || unit);
-      if (!isAnyFilterActive) {
-        const recordTime = new Date(grn.completedDate || grn.receivedDate || grn.createdAt || grn.updatedAt).getTime();
-        if (Date.now() - recordTime > 24 * 60 * 60 * 1000) return false;
-      }
       
       const resolvedSupplier = grn.supplierName || grn.purchaseOrder?.supplier || grn.supplierId;
       
@@ -999,6 +945,13 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
           });
         }
         if (!hasMatch) return false;
+      }
+
+      // If no advanced filters are active, enforce 24‑hour recency filter
+      const isAnyFilterActive = !!(dateFrom || dateTo || supplier || medicine || invoice || poId || status || unit);
+      if (!isAnyFilterActive) {
+        const recordTime = new Date(grn.completedDate || grn.receivedDate || grn.createdAt || grn.updatedAt).getTime();
+        if (Date.now() - recordTime > 24 * 60 * 60 * 1000) return false;
       }
 
       return true;
@@ -1118,7 +1071,7 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                 <Database size={14} />
               </button>
             </h3>
-            <p className="text-xs text-slate-400 font-medium">Lifecycle tracking: alerts → purchase request → approval → PO → shipping → receiving → completed ledger</p>
+            <p className="text-xs text-slate-400 font-medium">Lifecycle tracking: Dashboard → PO → GRN → History</p>
           </div>
 
           <div className="flex gap-2">
@@ -1128,43 +1081,25 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
           </div>
         </div>
 
-        {/* 13 MODULE PAGE TAB-NAVIGATION */}
-        {(() => {
-          const enablePRWorkflow = false;
-          const enableShipmentTracking = false;
-          return (
-            <div className="flex flex-wrap items-center gap-1.5 bg-slate-150 p-1.5 rounded-2xl w-full">
-              <button onClick={() => resetNavigation('dashboard')} tabIndex={0}
-                className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'dashboard' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-                <TrendingUp size={13} /> Dashboard
-              </button>
-              {enablePRWorkflow && (
-                <button onClick={() => resetNavigation('pr')} tabIndex={0}
-                  className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'pr' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-                  <ClipboardList size={13} /> Purchase Requests ({pendingRequestsCount})
-                </button>
-              )}
-              <button onClick={() => resetNavigation('po')} tabIndex={0}
-                className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'po' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-                <FileText size={13} /> Purchase Orders ({pendingPOCount})
-              </button>
-              {enableShipmentTracking && (
-                <button onClick={() => resetNavigation('shipments')} tabIndex={0}
-                  className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'shipments' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-                  <Truck size={13} /> Shipment Track ({pendingShipmentsCount})
-                </button>
-              )}
-              <button onClick={() => resetNavigation('grn')} tabIndex={0}
-                className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'grn' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-                <PackageCheck size={13} /> GRN Receivables
-              </button>
-              <button onClick={() => resetNavigation('completed')} tabIndex={0}
-                className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'completed' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-                <CheckCircle size={13} /> Procurement History
-              </button>
-            </div>
-          );
-        })()}
+        {/* 4 MODULE PAGE TAB-NAVIGATION */}
+        <div className="flex flex-wrap items-center gap-1.5 bg-slate-150 p-1.5 rounded-2xl w-full">
+          <button onClick={() => resetNavigation('dashboard')} tabIndex={0}
+            className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'dashboard' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+            <TrendingUp size={13} /> Dashboard
+          </button>
+          <button onClick={() => resetNavigation('po')} tabIndex={0}
+            className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'po' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+            <FileText size={13} /> Purchase Orders
+          </button>
+          <button onClick={() => resetNavigation('grn')} tabIndex={0}
+            className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'grn' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+            <PackageCheck size={13} /> GRN Receivables ({totalPendingGRNCount})
+          </button>
+          <button onClick={() => resetNavigation('completed')} tabIndex={0}
+            className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition cursor-pointer kb-focusable focus:ring-2 focus:ring-blue-500 focus:outline-none ${currentTab === 'completed' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+            <CheckCircle size={13} /> Procurement History
+          </button>
+        </div>
 
         {/* ─── TAB 1: PROCUREMENT DASHBOARD ─── */}
         {currentTab === 'dashboard' && (
@@ -1464,310 +1399,6 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
           </div>
         )}
 
-        {/* ─── TAB 2: PURCHASE REQUESTS ─── */}
-        {currentTab === 'pr' && (
-          <div className="space-y-6 animate-fade-in">
-            {/* SUB-VIEW: LIST VIEW */}
-            {currentSubView === 'list' && (
-              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-4">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-3">
-                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                    <ClipboardList size={14} className="text-blue-600" /> Purchase Request Register
-                  </h4>
-                  <div className="flex items-center gap-3">
-                    <div className="relative w-full md:w-64">
-                      <input
-                        type="text"
-                        placeholder="Search PR ID or requester..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full p-2 pl-8 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                      />
-                      <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                    </div>
-                    <button onClick={() => setCurrentSubView('create')} className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase transition cursor-pointer shadow-sm">
-                      <Plus size={14} /> New Purchase Request
-                    </button>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 text-slate-400 uppercase font-black text-[9px] border-b border-slate-200">
-                        <th className="py-2.5 px-3">PR ID</th>
-                        <th className="py-2.5 px-3">PR Date</th>
-                        <th className="py-2.5 px-3">Requested By</th>
-                        <th className="py-2.5 px-3">Priority</th>
-                        <th className="py-2.5 px-3 text-center">Items Count</th>
-                        <th className="py-2.5 px-3 text-center">Status</th>
-                        <th className="py-2.5 px-3 text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {purchaseRequests
-                        .filter(pr => {
-                          if (!searchQuery) return true;
-                          const q = searchQuery.toLowerCase();
-                          return pr.id.toLowerCase().includes(q) || (pr.requestedBy && pr.requestedBy.toLowerCase().includes(q));
-                        })
-                        .map(pr => (
-                        <tr key={pr.id} className="border-b border-slate-100 hover:bg-slate-50/50">
-                          <td className="py-3 px-3 font-mono font-bold text-[10px] text-slate-700">{pr.id}</td>
-                          <td className="py-3 px-3 text-slate-500 font-semibold">{pr.requestDate}</td>
-                          <td className="py-3 px-3 font-bold text-slate-700">{pr.requestedBy || 'Staff'}</td>
-                          <td className="py-3 px-3">
-                            <span className={`px-2 py-0.5 rounded text-[8px] font-black border ${pr.priority === 'High' ? 'text-rose-700 bg-rose-50 border-rose-200' : 'text-slate-600 bg-slate-50 border-slate-200'}`}>{pr.priority}</span>
-                          </td>
-                          <td className="py-3 px-3 text-center font-bold">{pr.items?.length || 0}</td>
-                          <td className="py-3 px-3 text-center">
-                            <span className={`px-2.5 py-0.5 rounded-full text-[8px] font-black border ${getStatusBadgeClass(pr.status)}`}>{pr.status}</span>
-                          </td>
-                          <td className="py-3 px-3 text-right">
-                            <button
-                              onClick={() => {
-                                setSelectedPRId(pr.id);
-                                // Prefill item approval checks with current database values
-                                const decisions = {};
-                                pr.items.forEach(it => { decisions[it.id] = it.status || 'Pending'; });
-                                setPrItemApprovals(decisions);
-                                setCurrentSubView('details');
-                              }}
-                              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg text-[9px] font-black uppercase text-slate-700 transition cursor-pointer"
-                            >
-                              Details & Approve
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* SUB-VIEW: CREATE VIEW */}
-            {currentSubView === 'create' && (
-              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-4">
-                <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-                  <h4 className="text-xs font-black text-slate-805 uppercase tracking-wider flex items-center gap-1.5">
-                    <Plus size={14} className="text-blue-650" /> Raise Purchase Request
-                  </h4>
-                  <button onClick={() => setCurrentSubView('list')} className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400">
-                    <X size={15} />
-                  </button>
-                </div>
-
-                <form onSubmit={handleCreateRequest} className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Requested By</label>
-                      <input type="text" value={role || 'Staff Pharmacist'} disabled className="w-full p-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-500" />
-                    </div>
-                    <div>
-                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Priority</label>
-                      <select value={newPR.priority} onChange={(e) => setNewPR({ ...newPR, priority: e.target.value })}
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 cursor-pointer">
-                        <option value="High">High (Urgent)</option>
-                        <option value="Medium">Medium</option>
-                        <option value="Low">Low</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Notes / Overall Reason</label>
-                      <input type="text" placeholder="e.g. Monthly stock replenishment..." value={newPR.remarks} onChange={(e) => setNewPR({ ...newPR, remarks: e.target.value })}
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700" />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2.5">
-                    <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider">Medicines Table List</label>
-                    {newPR.items.map((item, index) => (
-                      <div key={index} className="flex flex-col md:flex-row gap-2 items-center bg-slate-50 border border-slate-150 p-3 rounded-xl">
-                        <div className="w-full md:flex-1">
-                          <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Medicine *</label>
-                          <SearchableDropdown
-                            options={medicines.map(m => ({ id: m.id, name: `${m.name || m.medicineName} (Stock: ${m.stock})` }))}
-                            value={item.medicineId}
-                            onChange={(val) => updatePRItem(index, 'medicineId', val)}
-                            placeholder="Type to search medicine..."
-                            inputClass="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                          />
-                        </div>
-                        <div className="w-full md:w-32">
-                          <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Quantity *</label>
-                          <input type="number" placeholder="Count" min="1" value={item.requestedQty} onChange={(e) => updatePRItem(index, 'requestedQty', e.target.value)}
-                            className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold" required />
-                        </div>
-                        <div className="w-full md:w-28">
-                          <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Unit</label>
-                          <select value={item.unit} onChange={(e) => updatePRItem(index, 'unit', e.target.value)}
-                            className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold cursor-pointer">
-                            <option value="Boxes">Boxes</option>
-                            <option value="Strips">Strips</option>
-                            <option value="Bottles">Bottles</option>
-                            <option value="Vials">Vials</option>
-                          </select>
-                        </div>
-                        <div className="w-full md:flex-1">
-                          <label className="block text-[8px] font-bold text-slate-400 uppercase mb-1">Item Remarks</label>
-                          <input type="text" placeholder="Remarks..." value={item.remarks} onChange={(e) => updatePRItem(index, 'remarks', e.target.value)}
-                            className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs" />
-                        </div>
-                        <div className="pt-4">
-                          {newPR.items.length > 1 && (
-                            <button type="button" onClick={() => removePRItem(index)} className="p-2 text-rose-600 hover:bg-rose-50 rounded-lg transition">
-                              <Trash size={14} />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-
-                    <button type="button" onClick={addPRItem} className="flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold uppercase transition cursor-pointer">
-                      <Plus size={12} /> Add Medicine
-                    </button>
-                  </div>
-
-                  <div className="flex gap-2 justify-end border-t border-slate-100 pt-3">
-                    <button type="button" onClick={() => {
-                      alert('Draft saved locally.');
-                      setCurrentSubView('list');
-                    }} className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-black uppercase cursor-pointer">Save Draft</button>
-                    <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase shadow-sm cursor-pointer">Submit PR</button>
-                  </div>
-                </form>
-              </div>
-            )}
-
-            {/* SUB-VIEW: DETAILS / APPROVAL VIEW */}
-            {currentSubView === 'details' && selectedPR && (
-              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-5">
-                <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-                  <h4 className="text-xs font-black text-slate-805 uppercase tracking-wider">Purchase Request Details: {selectedPR.id}</h4>
-                  <button onClick={() => setCurrentSubView('list')} className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400">
-                    <X size={15} />
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-50 p-4 rounded-xl text-xs">
-                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Request Date</span><span className="font-bold">{selectedPR.requestDate}</span></div>
-                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Requested By</span><span className="font-bold">{selectedPR.requestedBy || 'Staff'}</span></div>
-                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Overall Status</span><span className={`px-2 py-0.5 rounded-full font-black text-[9px] border ${getStatusBadgeClass(selectedPR.status)}`}>{selectedPR.status}</span></div>
-                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Notes</span><span className="font-bold text-slate-600">{selectedPR.remarks || 'None'}</span></div>
-                </div>
-
-                <div className="space-y-3">
-                  <span className="block text-[10px] font-black uppercase text-slate-500 border-b border-slate-100 pb-1">Items Approval Decisions</span>
-                  <div className="space-y-2">
-                    {selectedPR.items.map((item, idx) => (
-                      <div key={idx} className="flex justify-between items-center p-3 border border-slate-150 rounded-xl hover:bg-slate-50/50">
-                        <div className="text-xs">
-                          <span className="font-bold text-slate-800">{item.medicineName}</span>
-                          <span className="text-slate-400 block text-[10px]">Requested: {item.requestedQty} {item.unit} | Status: <b className={item.status === 'Approved' ? 'text-emerald-600' : item.status === 'Rejected' ? 'text-rose-600' : 'text-amber-600'}>{item.status}</b></span>
-                        </div>
-
-                        {item.status === 'Pending' ? (
-                          <div className="flex gap-1">
-                            <button
-                              onClick={() => {
-                                setPrItemApprovals({ ...prItemApprovals, [item.id]: 'Approved' });
-                                setPrItemRemarks({ ...prItemRemarks, [item.id]: '' });
-                              }}
-                              className={`px-2.5 py-1 text-[9px] font-bold uppercase rounded-lg border transition ${prItemApprovals[item.id] === 'Approved' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-600 border-slate-200'}`}
-                            >
-                              Approve
-                            </button>
-                            <button
-                              onClick={() => {
-                                const reason = window.prompt(`Enter rejection reason for ${item.medicineName || 'item'}:`);
-                                if (reason === null) return;
-                                setPrItemApprovals({ ...prItemApprovals, [item.id]: 'Rejected' });
-                                setPrItemRemarks({ ...prItemRemarks, [item.id]: reason || 'Rejected by manager' });
-                              }}
-                              className={`px-2.5 py-1 text-[9px] font-bold uppercase rounded-lg border transition ${prItemApprovals[item.id] === 'Rejected' ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-slate-600 border-slate-200'}`}
-                            >
-                              Reject
-                            </button>
-                          </div>
-                        ) : (
-                          <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${getStatusBadgeClass(item.status)}`}>{item.status}</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {selectedPR.items.some(item => item.status === 'Pending') && (
-                  <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
-                    <button
-                      onClick={() => {
-                        const reason = window.prompt("Enter rejection reason for entire PR:");
-                        if (reason === null) return;
-                        handleRejectPR(selectedPR.id, reason);
-                      }}
-                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black uppercase transition cursor-pointer"
-                    >
-                      Reject Entire PR
-                    </button>
-                    <button
-                      onClick={async () => {
-                        const payload = Object.keys(prItemApprovals)
-                          .filter(itemId => {
-                            const originalItem = selectedPR.items.find(i => String(i.id) === String(itemId));
-                            return originalItem && originalItem.status === 'Pending';
-                          })
-                          .map(itemId => ({
-                            itemId,
-                            status: prItemApprovals[itemId],
-                            remarks: prItemRemarks[itemId] || ''
-                          }))
-                          .filter(p => p.status === 'Approved' || p.status === 'Rejected');
-                        
-                        if (payload.length === 0) {
-                          alert('Please select approval or rejection for at least one pending item.');
-                          return;
-                        }
-                        const updatedPR = await handleApprovePR(selectedPR.id, payload);
-                        if (updatedPR) {
-                          const approvedItems = updatedPR.items.filter(i => i.status === 'Approved');
-                          if (approvedItems.length > 0) {
-                            setPoMode('PR');
-                            setLinkedPRId(updatedPR.id);
-                            setPrApprovedItems(approvedItems);
-                            resetNavigation('po', 'create');
-                          } else {
-                            resetNavigation('pr', 'list');
-                          }
-                        }
-                      }}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase transition cursor-pointer"
-                    >
-                      Submit Decisions
-                    </button>
-                  </div>
-                )}
-
-                {(selectedPR.status === 'Approved' || selectedPR.status === 'Partially Approved') && (
-                  <div className="flex justify-end border-t border-slate-100 pt-3">
-                    <button
-                      onClick={() => {
-                        setPoMode('PR');
-                        setLinkedPRId(selectedPR.id);
-                        setPrApprovedItems(selectedPR.items.filter(i => i.status === 'Approved'));
-                        resetNavigation('po', 'create');
-                      }}
-                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase transition cursor-pointer"
-                    >
-                      Generate Purchase Order →
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
         {/* ─── TAB 3: PURCHASE ORDERS ─── */}
         {currentTab === 'po' && (
           <div className="space-y-6 animate-fade-in">
@@ -1784,16 +1415,17 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                 </div>
 
                 {/* Search and Tabs row */}
-                <div className="flex flex-col md:flex-row justify-between items-center gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-105">
-                  <div className="flex flex-wrap gap-1.5 w-full md:w-auto">
-                    {['Pending', 'Partially Received', 'Completed', 'Cancelled'].map((tab) => (
+                <div className="space-y-3 bg-slate-50 p-3.5 rounded-2xl border border-slate-100">
+                  {/* Row 1: Status Tab Buttons */}
+                  <div className="flex flex-wrap gap-1.5 w-full">
+                    {['Pending', 'Accepted', 'Approved', 'Partially Received', 'Completed', 'Cancelled'].map((tab) => (
                       <button
                         key={tab}
                         onClick={() => { setPoListTab(tab); updateFilter('po', 'status', ''); }}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all uppercase cursor-pointer ${
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all uppercase cursor-pointer border ${
                           poListTab === tab && !filters.po.status
-                            ? 'bg-blue-600 text-white shadow-sm font-black' 
-                            : 'bg-white hover:bg-slate-150 text-slate-650 border border-slate-200'
+                            ? 'bg-blue-600 border-blue-600 text-white shadow-sm font-black' 
+                            : 'bg-white hover:bg-slate-100 border-slate-200 text-slate-600 shadow-sm'
                         }`}
                       >
                         {tab}
@@ -1801,24 +1433,27 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
                     ))}
                   </div>
 
-                  {/* PO ADVANCED FILTERS */}
-                  <div className="flex flex-wrap items-center gap-2">
-                    <input type="text" placeholder="PO ID..." value={filters.po.poId} onChange={e => updateFilter('po', 'poId', e.target.value)} className="w-24 p-1.5 text-xs border border-slate-200 rounded focus:ring-2 focus:ring-blue-500 outline-none" />
-                    <input type="text" placeholder="Supplier..." value={filters.po.supplier} onChange={e => updateFilter('po', 'supplier', e.target.value)} className="w-28 p-1.5 text-xs border border-slate-200 rounded focus:ring-2 focus:ring-blue-500 outline-none" />
-                    <input type="text" placeholder="Medicine..." value={filters.po.medicine} onChange={e => updateFilter('po', 'medicine', e.target.value)} className="w-28 p-1.5 text-xs border border-slate-200 rounded focus:ring-2 focus:ring-blue-500 outline-none" />
-                    <div className="flex items-center gap-1 bg-white border border-slate-200 rounded px-1">
-                      <span className="text-[10px] text-slate-400 pl-1">₹</span>
-                      <input type="number" placeholder="Min" value={filters.po.priceMin} onChange={e => updateFilter('po', 'priceMin', e.target.value)} className="w-12 p-1 text-[10px] bg-transparent outline-none" />
+                  {/* Row 2: Advanced Search Filters */}
+                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-200/50">
+                    <input type="text" placeholder="PO ID..." value={filters.po.poId} onChange={e => updateFilter('po', 'poId', e.target.value)} className="w-24 p-2 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-semibold text-slate-700 shadow-sm" />
+                    <input type="text" placeholder="Supplier..." value={filters.po.supplier} onChange={e => updateFilter('po', 'supplier', e.target.value)} className="w-28 p-2 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-semibold text-slate-700 shadow-sm" />
+                    <input type="text" placeholder="Medicine..." value={filters.po.medicine} onChange={e => updateFilter('po', 'medicine', e.target.value)} className="w-28 p-2 text-xs bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-semibold text-slate-700 shadow-sm" />
+                    
+                    <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl px-2 py-1 shadow-sm">
+                      <span className="text-[10px] text-slate-400 pl-0.5">₹</span>
+                      <input type="number" placeholder="Min" value={filters.po.priceMin} onChange={e => updateFilter('po', 'priceMin', e.target.value)} className="w-12 p-0.5 text-xs bg-transparent outline-none font-semibold text-slate-700" />
                       <span className="text-[10px] text-slate-300">-</span>
-                      <input type="number" placeholder="Max" value={filters.po.priceMax} onChange={e => updateFilter('po', 'priceMax', e.target.value)} className="w-12 p-1 text-[10px] bg-transparent outline-none" />
+                      <input type="number" placeholder="Max" value={filters.po.priceMax} onChange={e => updateFilter('po', 'priceMax', e.target.value)} className="w-12 p-0.5 text-xs bg-transparent outline-none font-semibold text-slate-700" />
                     </div>
-                    <div className="flex items-center gap-1 bg-white border border-slate-200 rounded px-1">
-                      <input type="date" value={filters.po.dateFrom} onChange={e => updateFilter('po', 'dateFrom', e.target.value)} className="w-20 p-1 text-[10px] bg-transparent outline-none" title="From Date" />
+                    
+                    <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl px-2 py-1 shadow-sm">
+                      <input type="date" value={filters.po.dateFrom} onChange={e => updateFilter('po', 'dateFrom', e.target.value)} className="w-24 p-0.5 text-xs bg-transparent outline-none text-slate-650 font-semibold cursor-pointer" title="From Date" />
                       <span className="text-[10px] text-slate-300">-</span>
-                      <input type="date" value={filters.po.dateTo} onChange={e => updateFilter('po', 'dateTo', e.target.value)} className="w-20 p-1 text-[10px] bg-transparent outline-none" title="To Date" />
+                      <input type="date" value={filters.po.dateTo} onChange={e => updateFilter('po', 'dateTo', e.target.value)} className="w-24 p-0.5 text-xs bg-transparent outline-none text-slate-655 font-semibold cursor-pointer" title="To Date" />
                     </div>
-                    <button onClick={() => clearFilters('po')} className="p-1.5 text-rose-500 hover:bg-rose-50 rounded transition-colors" title="Clear Filters">
-                      <X size={14} />
+                    
+                    <button onClick={() => clearFilters('po')} className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-xl transition-all font-bold flex items-center gap-1 text-xs cursor-pointer shadow-sm border border-slate-100 bg-white" title="Clear Filters">
+                      <X size={13} /> Clear
                     </button>
                   </div>
                 </div>
@@ -2298,214 +1933,6 @@ export default function PurchaseView({ role, setSchemaModalTable }) {
             {currentSubView === 'details' && !selectedPO && (
               <div className="bg-white border border-slate-200 p-8 rounded-2xl text-center text-slate-400 italic">
                 Loading Purchase Order details or PO not found...
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ─── TAB 4: SHIPMENT TRACKING ─── */}
-        {currentTab === 'shipments' && (
-          <div className="space-y-6 animate-fade-in">
-            {/* SUB-VIEW: LIST VIEW */}
-            {currentSubView === 'list' && (
-              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-4">
-                <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                    <Truck size={14} className="text-blue-600" /> Active Shipments Registry
-                  </h4>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 text-slate-400 uppercase font-black text-[9px] border-b border-slate-200">
-                        <th className="py-2.5 px-3">Shipment ID</th>
-                        <th className="py-2.5 px-3">PO Reference</th>
-                        <th className="py-2.5 px-3">Tracking ID</th>
-                        <th className="py-2.5 px-3">Dispatch Date</th>
-                        <th className="py-2.5 px-3 text-center">Status</th>
-                        <th className="py-2.5 px-3 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {shipments.map(sh => (
-                        <tr key={sh.id} className="border-b border-slate-100 hover:bg-slate-50/50">
-                          <td className="py-3 px-3 font-mono font-bold text-[10px] text-slate-700">{sh.id}</td>
-                          <td className="py-3 px-3 font-mono text-slate-450">{sh.poId}</td>
-                          <td className="py-3 px-3 text-slate-550 font-bold">{sh.trackingId || 'N/A'}</td>
-                          <td className="py-3 px-3 text-slate-450">{sh.dispatchDate ? new Date(sh.dispatchDate).toLocaleDateString('en-IN') : 'N/A'}</td>
-                          <td className="py-3 px-3 text-center">
-                            <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${getStatusBadgeClass(sh.status)}`}>{sh.status}</span>
-                          </td>
-                          <td className="py-3 px-3 text-right">
-                            <button
-                              onClick={() => {
-                                setSelectedShipmentIdState(sh.id);
-                                setCurrentSubView('details');
-                              }}
-                              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg text-[9px] font-black uppercase text-slate-700 transition cursor-pointer"
-                            >
-                              View / Track
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                      {shipments.length === 0 && <tr><td colSpan="6" className="py-6 text-center text-slate-400 italic">No active shipments. Mark PO dispatch to create shipments.</td></tr>}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* SUB-VIEW: SHIPMENT DETAILS / TIMELINE VIEW */}
-            {currentSubView === 'details' && selectedShipment && (
-              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-6">
-                <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-                  <h4 className="text-xs font-black text-slate-805 uppercase tracking-wider">Shipment Status & Chronology: {selectedShipment.id}</h4>
-                  <button onClick={() => setCurrentSubView('list')} className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400">
-                    <X size={15} />
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-50 p-4 rounded-xl text-xs">
-                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">PO reference</span><span className="font-bold font-mono">{selectedShipment.poId}</span></div>
-                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Tracking reference</span><span className="font-bold">{selectedShipment.trackingId || 'N/A'}</span></div>
-                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Invoice Number</span><span className="font-bold text-slate-700">{selectedShipment.invoiceNumber || 'N/A'}</span></div>
-                  <div><span className="text-slate-400 block font-bold uppercase text-[9px]">Dispatch Date</span><span className="font-bold">{selectedShipment.dispatchDate ? new Date(selectedShipment.dispatchDate).toLocaleDateString('en-IN') : 'N/A'}</span></div>
-                </div>
-
-                {/* TRACKING TIMELINE */}
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-4">
-                  <div className="flex justify-between items-center border-b border-slate-200 pb-2 text-xs">
-                    <div>
-                      <span className="text-[10px] text-slate-400 block font-bold uppercase">Active Status</span>
-                      <span className="font-bold text-slate-800">{selectedShipment.status}</span>
-                    </div>
-                    {selectedShipment.status !== 'Delivered' && (
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] text-slate-500 font-bold uppercase">Change Status:</span>
-                        <select
-                          value={selectedShipment.status}
-                          onChange={(e) => handleUpdateShipmentStatus(selectedShipment.id, e.target.value)}
-                          className="p-1 bg-white border border-slate-200 rounded-lg text-[10px] font-bold cursor-pointer"
-                        >
-                          <option value="Supplier Accepted">Supplier Accepted</option>
-                          <option value="Packed">Packed</option>
-                          <option value="Shipped">Shipped</option>
-                          <option value="In Transit">In Transit</option>
-                          <option value="Delivered">Delivered</option>
-                        </select>
-                      </div>
-                    )}
-                  </div>
-
-                  {(() => {
-                    const statuses = ['Supplier Accepted', 'Packed', 'Shipped', 'In Transit', 'Delivered'];
-                    const currentIdx = statuses.indexOf(selectedShipment.status);
-                    return (
-                      <div className="relative flex justify-between items-center w-full py-4 text-xs font-bold text-slate-400 max-w-2xl mx-auto">
-                        <div className="absolute left-0 right-0 h-0.5 bg-slate-200 top-1/2 -translate-y-1/2 -z-10" />
-                        {statuses.map((st, sidx) => {
-                          const isDone = sidx <= currentIdx;
-                          return (
-                            <div key={sidx} className="flex flex-col items-center gap-1 bg-slate-50 px-2 text-center shrink-0">
-                              <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] border transition-all ${
-                                isDone ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-400 border-slate-200'
-                              }`}>
-                                {isDone ? '✓' : sidx + 1}
-                              </div>
-                              <span className={`text-[8px] uppercase tracking-wider ${isDone ? 'text-slate-700 font-bold' : 'text-slate-400'}`}>{st}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })()}
-                </div>
-
-                <div className="space-y-3">
-                  <span className="block text-[10px] font-black uppercase text-slate-500 border-b border-slate-100 pb-1">Shipped Items Ledger</span>
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 max-h-48 overflow-y-auto space-y-1.5 font-mono text-[10px]">
-                    {selectedShipment.items?.map((it, idx) => (
-                      <div key={idx} className="flex justify-between border-b border-slate-200/50 pb-1.5">
-                        <span>{it.medicine?.name || it.medicine?.medicineName || 'Medicine'}</span>
-                        <span className="font-black text-slate-800">{it.qty} Units</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {selectedShipment.status === 'Delivered' && (
-                  <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
-                    <button
-                      onClick={() => {
-                        setSelectedPOId(selectedShipment.poId);
-                        loadPOItems(selectedShipment.poId, selectedShipment.id);
-                        resetNavigation('grn', 'create');
-                      }}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase transition cursor-pointer"
-                    >
-                      Record GRN for Shipment →
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* SUB-VIEW: CREATE SHIPMENT FORM */}
-            {currentSubView === 'create' && (
-              <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-4">
-                <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-                  <h4 className="text-xs font-black text-slate-805 uppercase tracking-wider">Log Dispatch Shipment</h4>
-                  <button onClick={() => setCurrentSubView('list')} className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400">
-                    <X size={15} />
-                  </button>
-                </div>
-
-                <form onSubmit={async (e) => {
-                  e.preventDefault();
-                  await handleCreateShipment(shipmentForm.poId, shipmentForm.trackingId, shipmentForm.invoiceNumber, shipmentForm.items);
-                  setCurrentSubView('list');
-                }} className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">PO Reference *</label>
-                      <input type="text" value={shipmentForm.poId} disabled className="w-full p-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 font-mono" />
-                    </div>
-                    <div>
-                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Tracking ID / Courier Ref *</label>
-                      <input type="text" value={shipmentForm.trackingId} onChange={(e) => setShipmentForm({ ...shipmentForm, trackingId: e.target.value })}
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold" required />
-                    </div>
-                    <div>
-                      <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Supplier Invoice Ref *</label>
-                      <input type="text" value={shipmentForm.invoiceNumber} onChange={(e) => setShipmentForm({ ...shipmentForm, invoiceNumber: e.target.value })}
-                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold" required />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <span className="block text-[10px] font-black uppercase text-slate-500">Shipped Quantities:</span>
-                    {shipmentForm.items.map((it, idx) => (
-                      <div key={idx} className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                        <span className="text-xs font-bold text-slate-700">{medicines.find(m => m.id === it.medicineId)?.name || 'Medicine'}</span>
-                        <input type="number" value={it.qty} onChange={(e) => {
-                          const val = parseInt(e.target.value);
-                          setShipmentForm(prev => {
-                            const newItems = [...prev.items];
-                            newItems[idx].qty = val;
-                            return { ...prev, items: newItems };
-                          });
-                        }} className="p-2 w-28 bg-white border border-slate-200 rounded-lg text-xs" required />
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="flex justify-end gap-2 pt-3 border-t border-slate-150">
-                    <button type="button" onClick={() => setCurrentSubView('list')} className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-bold uppercase cursor-pointer">Cancel</button>
-                    <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold uppercase shadow-sm cursor-pointer">Log Shipment</button>
-                  </div>
-                </form>
               </div>
             )}
           </div>

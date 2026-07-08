@@ -104,5 +104,14 @@ export const medicineController = {
     } catch (error) {
       next(error);
     }
+  },
+
+  getStatuses: async (req, res, next) => {
+    try {
+      const data = await medicineService.getStatuses();
+      res.status(200).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
   }
 };

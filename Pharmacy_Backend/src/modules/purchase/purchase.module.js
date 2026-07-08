@@ -832,45 +832,53 @@ export const purchaseService = {
             });
           }
 
-          let rackQty = 0;
-          let warehouseQty = acceptedQty;
+          let warehouse = await tx.warehouse.findFirst({
+            where: { status: 'Active', isDeleted: false }
+          });
+          if (!warehouse) {
+            warehouse = await tx.warehouse.create({
+              data: { name: 'Central Warehouse A', code: 'CWH-A', status: 'Active', type: 'Central' }
+            });
+          }
 
-          if (allocatedComp) {
-            const currentUsage = allocatedComp.medicineLocations.reduce((sum, loc) => sum + loc.qty, 0);
-            const space = allocatedComp.maxCapacity - currentUsage;
-            if (acceptedQty <= space) {
-              rackQty = acceptedQty;
-              warehouseQty = 0;
-            } else {
-              rackQty = space;
-              warehouseQty = acceptedQty - space;
-            }
-
-            await tx.medicineLocation.create({
-              data: {
-                compartmentId: allocatedComp.id,
+          // Receive all accepted stock into warehouse stock with its batch number
+          await tx.warehouseStock.upsert({
+            where: {
+              warehouseId_medicineId_batchNumber: {
+                warehouseId: warehouse.id,
                 medicineId: gi.medicineId,
-                batchNumber: batchNo,
-                qty: rackQty
+                batchNumber: batchNo
               }
-            });
-          }
-
-          if (warehouseQty > 0) {
-            let warehouse = await tx.warehouse.findFirst({
-              where: { status: 'Active', isDeleted: false }
-            });
-            if (!warehouse) {
-              warehouse = await tx.warehouse.create({
-                data: { name: 'Central Warehouse A', code: 'CWH-A', status: 'Active', type: 'Central' }
-              });
+            },
+            update: {
+              qty: { increment: acceptedQty },
+              receivedDate: new Date(),
+              movementStatus: 'In warehouse'
+            },
+            create: {
+              warehouseId: warehouse.id,
+              medicineId: gi.medicineId,
+              batchNumber: batchNo,
+              qty: acceptedQty,
+              receivedDate: new Date(),
+              movementStatus: 'In warehouse'
             }
-            await tx.warehouseStock.upsert({
-              where: { warehouseId_medicineId: { warehouseId: warehouse.id, medicineId: gi.medicineId } },
-              update: { qty: { increment: warehouseQty } },
-              create: { warehouseId: warehouse.id, medicineId: gi.medicineId, qty: warehouseQty }
-            });
-          }
+          });
+
+          // Update aggregated Inventory
+          await tx.inventory.upsert({
+            where: { medicineId: gi.medicineId },
+            update: {
+              totalStock: { increment: acceptedQty },
+              warehouseStock: { increment: acceptedQty }
+            },
+            create: {
+              medicineId: gi.medicineId,
+              totalStock: acceptedQty,
+              warehouseStock: acceptedQty,
+              rackStock: 0
+            }
+          });
 
           await tx.inventoryLog.create({
             data: {
@@ -879,7 +887,7 @@ export const purchaseService = {
               type: 'Stock In',
               qty: acceptedQty,
               user: receivedBy || 'Inventory Staff',
-              remarks: `GRN ${createdGRN.id} — Rack: ${rackQty}, Warehouse: ${warehouseQty}`
+              remarks: `GRN ${createdGRN.id} — Received into warehouse: ${acceptedQty}`
             }
           });
 
@@ -911,6 +919,31 @@ export const purchaseService = {
           where: { id: poId },
           data: { status: newPOStatus }
         });
+
+        // ─── FINANCE INTEGRATION ───────────────────────────────────────────────
+        const purchaseAmount = grnItemsToCreate.reduce((sum, gi) => {
+          const poItem = po.items.find(pi => pi.medicineId === gi.medicineId);
+          const price = poItem ? Number(poItem.unitPrice) : 0;
+          const tax = poItem ? Number(poItem.tax || 0) : 0;
+          return sum + (gi.acceptedQty * price * (1 + (tax / 100)));
+        }, 0);
+
+        if (purchaseAmount > 0) {
+          await tx.financeSupplierPayment.create({
+            data: {
+              supplierId: po.supplierId,
+              supplierName: po.supplier ? po.supplier.name : 'Unknown Supplier',
+              poId: poId,
+              grnId: createdGRN.id,
+              invoiceNumber: invoiceNumber ? invoiceNumber.trim() : null,
+              purchaseAmount: purchaseAmount,
+              paidAmount: 0,
+              pendingAmount: purchaseAmount,
+              paymentMode: po.paymentTerms || 'Bank Transfer',
+              status: 'Pending'
+            }
+          });
+        }
       }
 
       // Verify user exists before setting FK to avoid constraint violation
@@ -1073,7 +1106,19 @@ export const purchaseService = {
 
     if (!med) throw new AppError('Medicine not found', 404);
 
-    let supplierId = med.supplierId;
+    // Look up default supplier from mappings
+    const defaultMapping = await prisma.medicineSupplierMapping.findFirst({
+      where: { medicineId, isDefault: true, status: 'Active' }
+    });
+
+    let supplierId = defaultMapping ? defaultMapping.supplierId : med.supplierId;
+    if (!supplierId) {
+      const firstMapping = await prisma.medicineSupplierMapping.findFirst({
+        where: { medicineId, status: 'Active' }
+      });
+      supplierId = firstMapping ? firstMapping.supplierId : null;
+    }
+
     if (!supplierId) {
       const firstSupplier = await prisma.supplier.findFirst({
         where: { isDeleted: false, isActive: true }

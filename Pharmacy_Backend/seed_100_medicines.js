@@ -140,6 +140,22 @@ async function main() {
       });
     }
 
+    // Lookup or create MedicineType
+    let typeName = 'Tablet';
+    if (med.type === 'Tablets') typeName = 'Tablet';
+    else if (med.type === 'Capsules') typeName = 'Capsule';
+    else if (med.type === 'Syrups') typeName = 'Syrup';
+    else if (med.type === 'Ointments') typeName = 'Ointment';
+    else if (med.type === 'Creams') typeName = 'Cream';
+    else if (med.type === 'Injection') typeName = 'Injection';
+    else if (med.type === 'Consumable') typeName = 'Consumable';
+    else if (med.type === 'Surgical') typeName = 'Surgical Item';
+
+    let mType = await prisma.medicineType.findUnique({ where: { name: typeName } });
+    if (!mType) {
+      mType = await prisma.medicineType.create({ data: { name: typeName } });
+    }
+
     // Check if medicine exists
     const existing = await prisma.medicine.findFirst({ where: { medicineName: med.name } });
     if (!existing) {
@@ -154,6 +170,7 @@ async function main() {
           genericName: med.generic,
           skuCode: generateSKU(med.name, 1000 + i),
           categoryId: category.id,
+          typeId: mType.id,
           supplierId: randomSupplier?.id || null,
           companyName: randomSupplier?.name || null,
           pricePerPiece: med.price,

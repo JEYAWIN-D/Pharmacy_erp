@@ -6,6 +6,7 @@ import userRoutes from '../modules/users/user.routes.js';
 import categoryRoutes from '../modules/category/category.routes.js';
 import supplierRoutes from '../modules/suppliers/index.js';
 import medicineRoutes from '../modules/medicine/index.js';
+import medicineTypeRoutes from '../modules/medicine-type/index.js';
 
 // New modules
 import manufacturerRoutes from '../modules/manufacturers/index.js';
@@ -36,6 +37,7 @@ router.use('/users', userRoutes);
 // Master Data
 router.use('/categories', categoryRoutes);
 router.use('/medicines', medicineRoutes);
+router.use('/medicine-types', medicineTypeRoutes);
 router.use('/manufacturers', manufacturerRoutes);
 
 // Suppliers

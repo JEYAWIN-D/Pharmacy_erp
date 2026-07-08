@@ -12,6 +12,9 @@ export const rackRepository = {
             include: { medicine: true }
           }
         }
+      },
+      rackStocks: {
+        include: { medicine: true }
       }
     },
     orderBy: { id: 'asc' } 
@@ -26,6 +29,9 @@ export const rackRepository = {
             include: { medicine: true }
           }
         }
+      },
+      rackStocks: {
+        include: { medicine: true }
       }
     }
   }),

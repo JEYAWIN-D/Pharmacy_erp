@@ -38,6 +38,8 @@ model Category {
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
   medicines   Medicine[]
+
+  @@map("medicine_category")
 }
 
 model Manufacturer {
@@ -61,6 +63,16 @@ model Medicine {
   genericName          String?
   brandName            String?
   skuCode              String                @unique
+  medicineCode         String?
+  typeId               String?
+  medicineType         MedicineType?         @relation(fields: [typeId], references: [id])
+  unit                 String?
+  mrp                  Decimal?              @db.Decimal(10, 2)
+  purchasePrice        Decimal?              @db.Decimal(10, 2)
+  sellingPrice         Decimal?              @db.Decimal(10, 2)
+  lowestStockLevel     Int                   @default(0)
+  coldStorageRequired  Boolean               @default(false)
+  statusName           String?               @default("Active")
   categoryId           String?
   supplierId           String?
   manufacturerId       String?
@@ -94,8 +106,14 @@ model Medicine {
   warehouseStocks      WarehouseStock[]
   grnItems             GRNItem[]
   stockLedgers         StockLedger[]
+  status               MedicineStatus?       @relation(fields: [statusName], references: [name])
+  supplierMappings     MedicineSupplierMapping[]
+  coldStorageRecords   ColdStorage[]
+  rackStocks           RackStock[]
+  stockMovements       StockMovement[]
+  inventory            Inventory?
 
-  @@map("medicines")
+  @@map("medicine_master")
 }
 
 model Supplier {
@@ -137,23 +155,28 @@ model Supplier {
   updatedBy         String?
   deletedAt         DateTime?
   deletedBy         String?
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  medicines              Medicine[]
-  purchaseOrders         PurchaseOrder[]
-  supplierInvoices       SupplierInvoice[]
-  supplierLedger         SupplierLedger[]
-  supplierPayments       SupplierPayment[]
-  supplierReturns        SupplierReturn[]
-  supplierCategories     SupplierCategory[]
-  grns                   GRN[]
-  supplierBrandMappings  SupplierBrandMapping[]
-  purchaseTerms          PurchaseTerm[]
-  supplierPriceHistory   SupplierPriceHistory[]
-  supplierDocuments      SupplierDocument[]
-  supplierPerformance    SupplierPerformance[]
-  supplierCreditNotes    SupplierCreditNote[]
-  supplierAuditLogs      SupplierAuditLog[]
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  medicines               Medicine[]
+  purchaseOrders          PurchaseOrder[]
+  supplierInvoices        SupplierInvoice[]
+  supplierLedger          SupplierLedger[]
+  supplierPayments        SupplierPayment[]
+  supplierReturns         SupplierReturn[]
+  supplierCategories      SupplierCategory[]
+  grns                    GRN[]
+  supplierBrandMappings   SupplierBrandMapping[]
+  purchaseTerms           PurchaseTerm[]
+  supplierPriceHistory    SupplierPriceHistory[]
+  supplierDocuments       SupplierDocument[]
+  supplierPerformance     SupplierPerformance[]
+  supplierCreditNotes     SupplierCreditNote[]
+  supplierAuditLogs       SupplierAuditLog[]
+  supplierMappings        MedicineSupplierMapping[]
+  batches                 MedicineBatch[]
+  financeSupplierPayments FinanceSupplierPayment[]
+
+  @@map("supplier_master")
 }
 
 model Rack {
@@ -171,6 +194,7 @@ model Rack {
   name         String?
   type         String?
   compartments Compartment[]
+  rackStocks   RackStock[]
 
   @@map("racks")
 }
@@ -241,16 +265,20 @@ model Warehouse {
 }
 
 model WarehouseStock {
-  id          Int       @id @default(autoincrement())
-  warehouseId String
-  medicineId  String
-  qty         Int       @default(0)
-  locationBin String?
-  updatedAt   DateTime  @updatedAt
-  medicine    Medicine  @relation(fields: [medicineId], references: [id])
-  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+  id             Int       @id @default(autoincrement())
+  warehouseId    String
+  medicineId     String
+  batchNumber    String    @default("")
+  qty            Int       @default(0)
+  locationBin    String?
+  status         String?   @default("Active")
+  receivedDate   DateTime? @default(now())
+  movementStatus String?   @default("In warehouse")
+  updatedAt      DateTime  @updatedAt
+  medicine       Medicine  @relation(fields: [medicineId], references: [id])
+  warehouse      Warehouse @relation(fields: [warehouseId], references: [id])
 
-  @@unique([warehouseId, medicineId])
+  @@unique([warehouseId, medicineId, batchNumber])
   @@map("warehouse_stocks")
 }
 
@@ -298,18 +326,27 @@ model OutletStock {
 }
 
 model MedicineBatch {
-  id             Int             @id @default(autoincrement())
-  medicineId     String
-  batchNumber    String          @unique
-  expiryDate     DateTime
-  stockQty       Int             @default(0)
-  status         String          @default("Active")
-  isDeleted      Boolean         @default(false)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  dispensingLogs DispensingLog[]
-  expiryAlerts   ExpiryAlert[]
-  medicine       Medicine        @relation(fields: [medicineId], references: [id])
+  id                 Int             @id @default(autoincrement())
+  medicineId         String
+  batchNumber        String          @unique
+  expiryDate         DateTime
+  stockQty           Int             @default(0)
+  status             String          @default("Active")
+  isDeleted          Boolean         @default(false)
+  mrp                Decimal?        @db.Decimal(10, 2)
+  purchasePrice      Decimal?        @db.Decimal(10, 2)
+  sellingPrice       Decimal?        @db.Decimal(10, 2)
+  mfgDate            DateTime?
+  supplierId         String?
+  grnId              String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  dispensingLogs     DispensingLog[]
+  expiryAlerts       ExpiryAlert[]
+  medicine           Medicine        @relation(fields: [medicineId], references: [id])
+  supplier           Supplier?       @relation(fields: [supplierId], references: [id])
+  grn                GRN?            @relation(fields: [grnId], references: [id])
+  coldStorageRecords ColdStorage[]
 
   @@map("medicine_batches")
 }
@@ -412,21 +449,22 @@ model PurchaseOrderItem {
 }
 
 model GRN {
-  id            String    @id @map("grn_id")
-  poId          String    @map("po_id")
-  supplierId    String?   @map("supplier_id")
-  shipmentId    String?   @map("shipment_id")
-  invoiceNumber String?   @map("invoice_number")
-  receivedDate  DateTime  @default(now()) @map("created_date")
-  receivedBy    String?   @map("received_by")
-  status        String    @default("Verified & Approved") @map("grn_status")
-  savedAsDraft  Boolean   @default(false) @map("saved_as_draft")
-  completedDate DateTime? @map("completed_date")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  id            String          @id @map("grn_id")
+  poId          String          @map("po_id")
+  supplierId    String?         @map("supplier_id")
+  shipmentId    String?         @map("shipment_id")
+  invoiceNumber String?         @map("invoice_number")
+  receivedDate  DateTime        @default(now()) @map("created_date")
+  receivedBy    String?         @map("received_by")
+  status        String          @default("Verified & Approved") @map("grn_status")
+  savedAsDraft  Boolean         @default(false) @map("saved_as_draft")
+  completedDate DateTime?       @map("completed_date")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
   items         GRNItem[]
-  purchaseOrder PurchaseOrder @relation(fields: [poId], references: [id])
-  supplier      Supplier?     @relation(fields: [supplierId], references: [id])
+  purchaseOrder PurchaseOrder   @relation(fields: [poId], references: [id])
+  supplier      Supplier?       @relation(fields: [supplierId], references: [id])
+  batches       MedicineBatch[]
 
   @@map("grn")
 }
@@ -1085,4 +1123,130 @@ model StockLedger {
   medicine        Medicine @relation(fields: [medicineId], references: [id])
 
   @@map("stock_ledger")
+}
+
+// ─── NEW CONNECTED MODELS ────────────────────────────────────────────────────
+
+model MedicineType {
+  id          String     @id @default(uuid())
+  name        String     @unique
+  description String?
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  medicines   Medicine[]
+
+  @@map("medicine_type")
+}
+
+model MedicineStatus {
+  id        String     @id @default(uuid())
+  name      String     @unique
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  medicines Medicine[]
+
+  @@map("medicine_status")
+}
+
+model MedicineSupplierMapping {
+  id                String   @id @default(uuid())
+  supplierId        String
+  medicineId        String
+  isDefault         Boolean  @default(false)
+  purchasePrice     Decimal  @db.Decimal(10, 2)
+  lastPurchasePrice Decimal? @db.Decimal(10, 2)
+  leadTimeDays      Int      @default(3)
+  minOrderQty       Int      @default(1)
+  status            String   @default("Active")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  supplier          Supplier @relation(fields: [supplierId], references: [id])
+  medicine          Medicine @relation(fields: [medicineId], references: [id])
+
+  @@unique([supplierId, medicineId])
+  @@map("medicine_supplier_mapping")
+}
+
+model ColdStorage {
+  id                  String         @id @default(uuid())
+  medicineId          String
+  batchId             Int?
+  requiredTemperature String?
+  currentTemperature  Decimal?       @db.Decimal(5, 2)
+  storagePlace        String?
+  rackFridgeLocation  String?
+  status              String         @default("Active")
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  medicine            Medicine       @relation(fields: [medicineId], references: [id])
+  batch               MedicineBatch? @relation(fields: [batchId], references: [id])
+
+  @@map("cold_storage")
+}
+
+model RackStock {
+  id          Int      @id @default(autoincrement())
+  rackId      String
+  medicineId  String
+  batchNumber String   @default("")
+  qty         Int      @default(0)
+  status      String   @default("Active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  rack        Rack     @relation(fields: [rackId], references: [id])
+  medicine    Medicine @relation(fields: [medicineId], references: [id])
+
+  @@unique([rackId, medicineId, batchNumber])
+  @@map("rack_stock")
+}
+
+model StockMovement {
+  id           String   @id @default(uuid())
+  medicineId   String
+  batchNumber  String?
+  warehouseId  String?
+  rackId       String?
+  qty          Int
+  movedDate    DateTime @default(now())
+  movedBy      String?
+  transferType String   // 'Warehouse to Rack', 'Rack to Warehouse', 'Rack to Rack'
+  remarks      String?
+  status       String   @default("Completed")
+  medicine     Medicine @relation(fields: [medicineId], references: [id])
+
+  @@map("stock_movements")
+}
+
+model Inventory {
+  id             String   @id @default(uuid())
+  medicineId     String   @unique
+  totalStock     Int      @default(0)
+  warehouseStock Int      @default(0)
+  rackStock      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  medicine       Medicine @relation(fields: [medicineId], references: [id])
+
+  @@map("inventory")
+}
+
+model FinanceSupplierPayment {
+  id             String    @id @default(uuid())
+  supplierId     String
+  supplierName   String
+  poId           String?
+  grnId          String?
+  invoiceNumber  String?
+  purchaseAmount Decimal   @db.Decimal(10, 2)
+  paidAmount     Decimal   @default(0) @db.Decimal(10, 2)
+  pendingAmount  Decimal   @db.Decimal(10, 2)
+  paymentDate    DateTime?
+  paymentMode    String?
+  status         String    @default("Pending") // 'Pending', 'Partially Paid', 'Paid'
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  supplier       Supplier  @relation(fields: [supplierId], references: [id])
+
+  @@map("finance_supplier_payments")
 }

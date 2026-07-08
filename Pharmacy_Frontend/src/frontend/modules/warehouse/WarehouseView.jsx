@@ -5,7 +5,7 @@ import {
   Plus, Edit3, Eye, FileText, CheckCircle2, AlertTriangle, AlertCircle,
   Truck, ArrowRight, ShieldCheck, ClipboardList, Info, FileSpreadsheet, X, Search, Filter, TrendingUp, Calendar, Lock, Users, ChevronRight, Layers, FileSignature, CheckSquare, PlusCircle, Database, Bell
 } from 'lucide-react';
-import { warehouseAPI, racksAPI } from '../../db/api';
+import { warehouseAPI, racksAPI, inventoryAPI } from '../../db/api';
 
 export default function WarehouseView({ role, setSchemaModalTable }) {
   // ── SECURITY ACCESS CHECK ──
@@ -169,29 +169,29 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
   // Derive inventory items dynamically joining warehouseStock + medicines
   const derivedInventory = React.useMemo(() => {
     return warehouseStock.map((w, idx) => {
-      const med = medicines.find(m => m.id === w.medicineId) || {};
-      const batchList = batches.filter(b => b.medicineId === w.medicineId);
-      const primaryBatch = batchList[0] || {};
+      const med = w.medicine || {};
+      const wh = w.warehouse || {};
       return {
-        id: `INV-WH-${idx + 100}`,
+        id: w.id || `INV-WH-${idx + 100}`,
         medicineId: w.medicineId,
-        name: w.name || med.name || 'Unknown',
-        genericName: med.generic || 'Generic Formulation',
-        brandName: med.brand || 'Brand Name',
-        batchNumber: w.batchNumber || primaryBatch.batchNumber || 'B-LOT-99',
-        mfgDate: w.mfgDate || '2025-10-12',
-        expiryDate: w.expiryDate || primaryBatch.expiryDate || '2027-12-31',
+        name: med.medicineName || w.name || 'Unknown',
+        genericName: med.genericName || 'Generic Formulation',
+        brandName: med.brandName || 'Brand Name',
+        batchNumber: w.batchNumber || 'B-LOT-99',
+        mfgDate: '2025-10-12',
+        expiryDate: '2027-12-31',
         qty: w.qty,
-        unit: 'Boxes',
-        rackLocation: w.location || 'Unallocated',
-        warehouseLocation: w.warehouseName,
-        supplier: med.manufacturer || 'Apex Medical Supplies',
-        status: (primaryBatch.status === 'Expired' || new Date(primaryBatch.expiryDate) < new Date()) ? 'Expired' : 'Active'
+        unit: 'Units',
+        rackLocation: w.locationBin || 'Unallocated',
+        warehouseLocation: wh.name || w.warehouseName || 'Central Warehouse A',
+        supplier: med.companyName || 'Supplier',
+        status: w.qty > 0 ? 'Active' : 'Empty',
+        movementStatus: w.movementStatus || 'In warehouse'
       };
     });
-  }, [warehouseStock, medicines, batches]);
+  }, [warehouseStock]);
 
-  // Sync default medicine IDs in forms when medicines list loads
+  // Sync default medicine and warehouse IDs in forms
   useEffect(() => {
     if (medicines.length > 0) {
       setFormW2W(prev => ({ ...prev, medicineId: medicines[0].id.toString() }));
@@ -200,7 +200,11 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
       setFormGRN(prev => ({ ...prev, medicineId: medicines[0].id.toString() }));
       setFormAdj(prev => ({ ...prev, medicineId: medicines[0].id.toString() }));
     }
-  }, [medicines]);
+    if (warehousesList.length > 0) {
+      setFormW2R(prev => ({ ...prev, warehouse: warehousesList[0].id }));
+      setFormR2W(prev => ({ ...prev, warehouse: warehousesList[0].id }));
+    }
+  }, [medicines, warehousesList]);
 
   // Compute metrics dynamically for the main dashboard
   const totalWHCount = warehousesList.length;
@@ -327,7 +331,7 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
   // 1. Warehouse to Warehouse (W2W)
   const handleW2WSubmit = (e) => {
     e.preventDefault();
-    const selectedMed = medicines.find(m => m.id === parseInt(formW2W.medicineId));
+    const selectedMed = medicines.find(m => m.id === formW2W.medicineId);
     if (!selectedMed) return;
 
     const qty = parseInt(formW2W.qty);
@@ -434,10 +438,10 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
     if (qty <= 0 || isNaN(qty)) return alert('Enter a valid transfer quantity');
 
     try {
-      const selectedMed = medicines.find(m => m.id === parseInt(formW2R.medicineId));
+      const selectedMed = medicines.find(m => m.id === formW2R.medicineId);
       const res = await warehouseAPI.createTransfer({
         transferType: 'Warehouse to Rack',
-        medicineId: parseInt(formW2R.medicineId),
+        medicineId: formW2R.medicineId,
         medicineName: selectedMed?.name || 'Unknown',
         fromLocation: formW2R.warehouse,
         toRack: formW2R.compartmentId,
@@ -456,6 +460,8 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
         if (stockRes.success) setWarehouseStock(stockRes.data);
         const transRes = await warehouseAPI.getTransfers();
         if (transRes.success) setWarehouseTransfers(transRes.data);
+        const racksRes = await racksAPI.getAll();
+        if (racksRes.success) setRacksData(racksRes.data);
       }
     } catch (err) {
       alert("Transfer Error: " + err.message);
@@ -470,10 +476,10 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
     if (qty <= 0 || isNaN(qty)) return alert('Enter a valid transfer quantity');
 
     try {
-      const selectedMed = medicines.find(m => m.id === parseInt(formR2W.medicineId));
+      const selectedMed = medicines.find(m => m.id === formR2W.medicineId);
       const res = await warehouseAPI.createTransfer({
         transferType: 'Rack to Warehouse',
-        medicineId: parseInt(formR2W.medicineId),
+        medicineId: formR2W.medicineId,
         medicineName: selectedMed?.name || 'Unknown',
         fromLocation: formR2W.compartmentId,
         toRack: formR2W.warehouse,
@@ -492,6 +498,8 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
         if (stockRes.success) setWarehouseStock(stockRes.data);
         const transRes = await warehouseAPI.getTransfers();
         if (transRes.success) setWarehouseTransfers(transRes.data);
+        const racksRes = await racksAPI.getAll();
+        if (racksRes.success) setRacksData(racksRes.data);
       }
     } catch (err) {
       alert("Transfer Error: " + err.message);
@@ -500,9 +508,9 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
 
 
   // 4. Purchase Goods Receipt (GRN)
-  const handleGRNSubmit = (e) => {
+  const handleGRNSubmit = async (e) => {
     e.preventDefault();
-    const selectedMed = medicines.find(m => m.id === parseInt(formGRN.medicineId));
+    const selectedMed = medicines.find(m => m.id === formGRN.medicineId);
     if (!selectedMed) return;
 
     const qty = parseInt(formGRN.qty);
@@ -511,72 +519,50 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
       return;
     }
 
-    const newGRNNo = formGRN.grnNumber || `GRN-${Date.now().toString().slice(-4)}`;
-    const mfg = formGRN.mfgDate || new Date().toISOString().split('T')[0];
-    const exp = formGRN.expiryDate || new Date(Date.now() + 365*24*60*60*1000).toISOString().split('T')[0];
+    try {
+      const currentStockRecord = warehouseStock.find(w => w.warehouseId === selectedWarehouseId && w.medicineId === selectedMed.id);
+      const currentQty = currentStockRecord ? currentStockRecord.qty : 0;
+      const newQty = currentQty + qty;
 
-    // Add to batches state
-    const newBatchId = Date.now();
-    setBatches(prev => [
-      ...prev,
-      { id: newBatchId, medicineId: selectedMed.id, batchNumber: formGRN.batchNumber || 'B-NEW-LOT', expiryDate: exp, stock: qty, status: 'Active' }
-    ]);
+      const res = await warehouseAPI.updateStock({
+        warehouseId: selectedWarehouseId || 'Central Warehouse A',
+        medicineId: selectedMed.id,
+        qty: newQty,
+        locationBin: `Rack ${formGRN.rackAllocation}`
+      });
 
-    // Add to warehouse stock
-    setWarehouseStock(prev => {
-      const exists = prev.find(w => w.warehouseName === formGRN.warehouse && w.medicineId === selectedMed.id);
-      if (exists) {
-        return prev.map(w => {
-          if (w.warehouseName === formGRN.warehouse && w.medicineId === selectedMed.id) {
-            return { ...w, qty: w.qty + qty, location: `Rack ${formGRN.rackAllocation}` };
-          }
-          return w;
+      if (res.success) {
+        await inventoryAPI.adjust({
+          medicineId: selectedMed.id,
+          qty: qty,
+          type: 'Stock In',
+          remarks: `Purchase Received from ${formGRN.supplier} | Invoice #${formGRN.invoiceNumber}`
         });
-      } else {
-        return [
-          ...prev,
-          { warehouseName: formGRN.warehouse, medicineId: selectedMed.id, name: selectedMed.name, qty, location: `Rack ${formGRN.rackAllocation}` }
-        ];
+
+        setIsGRNOpen(false);
+
+        triggerAuditAndAlert(
+          'Purchase Goods Receipt Logged',
+          'None',
+          `${qty} units of ${selectedMed.name} (Batch: ${formGRN.batchNumber}) allocated to WH ${formGRN.warehouse} / Rack ${formGRN.rackAllocation}`,
+          'Purchase Operations',
+          `Stock Received Successfully from ${formGRN.supplier}`
+        );
+
+        // Refresh data
+        const stockRes = await warehouseAPI.getStock();
+        if (stockRes.success) setWarehouseStock(stockRes.data);
       }
-    });
-
-    // Update active compartment details
-    setRacksData(prev => prev.map(rack => {
-      return {
-        ...rack,
-        compartments: rack.compartments.map(comp => {
-          if (comp.id !== formGRN.rackAllocation) return comp;
-          return {
-            ...comp,
-            medicineCount: comp.medicineCount + 1,
-            usedCapacity: Math.min(comp.capacity, comp.usedCapacity + qty)
-          };
-        })
-      };
-    }));
-
-    // Log TRX
-    setInventoryLogs([
-      { id: newGRNNo, date: new Date().toLocaleString(), medicineName: selectedMed.name, type: 'Stock In', qty, user: 'Admin', remarks: `Purchase Received from ${formGRN.supplier} | Invoice #${formGRN.invoiceNumber}` },
-      ...inventoryLogs
-    ]);
-
-    setIsGRNOpen(false);
-
-    triggerAuditAndAlert(
-      'Purchase Goods Receipt Logged',
-      'None',
-      `${qty} units of ${selectedMed.name} (Batch: ${formGRN.batchNumber}) allocated to WH ${formGRN.warehouse} / Rack ${formGRN.rackAllocation}`,
-      'Purchase Operations',
-      `Stock Received Successfully from ${formGRN.supplier}`
-    );
+    } catch (err) {
+      alert("GRN Error: " + err.message);
+    }
   };
 
 
   // 5. Stock Adjustment
-  const handleAdjustmentSubmit = (e) => {
+  const handleAdjustmentSubmit = async (e) => {
     e.preventDefault();
-    const selectedMed = medicines.find(m => m.id === parseInt(formAdj.medicineId));
+    const selectedMed = medicines.find(m => m.id === formAdj.medicineId);
     if (!selectedMed) return;
 
     const qty = parseInt(formAdj.qty);
@@ -585,88 +571,84 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
       return;
     }
 
-    // Deduct stock in warehouse
-    setWarehouseStock(prev => prev.map(w => {
-      if (w.medicineId === selectedMed.id) {
-        return { ...w, qty: Math.max(0, w.qty - qty) };
-      }
-      return w;
-    }).filter(w => w.qty > 0 || w.warehouseName === 'Central Warehouse A'));
+    try {
+      const currentStockRecord = warehouseStock.find(w => w.warehouseId === selectedWarehouseId && w.medicineId === selectedMed.id);
+      const currentQty = currentStockRecord ? currentStockRecord.qty : 0;
+      const newQty = Math.max(0, currentQty - qty);
 
-    // Pushes expired/damaged item automatically into Quarantine Warehouse
-    if (formAdj.reason === 'Expired Stock' || formAdj.reason === 'Damaged Stock') {
-      setWarehouseStock(prev => {
-        const quarExists = prev.find(w => w.warehouseName === 'Quarantine Warehouse' && w.medicineId === selectedMed.id);
-        if (quarExists) {
-          return prev.map(w => {
-            if (w.warehouseName === 'Quarantine Warehouse' && w.medicineId === selectedMed.id) {
-              return { ...w, qty: w.qty + qty };
-            }
-            return w;
-          });
-        } else {
-          return [
-            ...prev,
-            { warehouseName: 'Quarantine Warehouse', medicineId: selectedMed.id, name: selectedMed.name, qty, location: 'Q-Row-1-Bin-A' }
-          ];
-        }
+      const res = await warehouseAPI.updateStock({
+        warehouseId: selectedWarehouseId,
+        medicineId: selectedMed.id,
+        qty: newQty,
+        locationBin: currentStockRecord?.locationBin || 'Unallocated'
       });
+
+      if (res.success) {
+        await inventoryAPI.adjust({
+          medicineId: selectedMed.id,
+          qty: -qty,
+          type: 'Adjustment',
+          remarks: `${formAdj.reason} - ${formAdj.remarks}`
+        });
+
+        setIsAdjustmentOpen(false);
+
+        triggerAuditAndAlert(
+          'Stock Adjustment Logged',
+          `Warehouse Stock deducted by ${qty}`,
+          `${formAdj.reason} applied.`,
+          'Warehouse Operations',
+          `Stock Adjustment Completed: ${formAdj.reason}`
+        );
+
+        // Refresh data
+        const stockRes = await warehouseAPI.getStock();
+        if (stockRes.success) setWarehouseStock(stockRes.data);
+      }
+    } catch (err) {
+      alert("Adjustment Error: " + err.message);
     }
-
-    // Log TRX
-    const adjId = `ADJ-${Date.now().toString().slice(-4)}`;
-    setInventoryLogs([
-      { id: adjId, date: new Date().toLocaleString(), medicineName: selectedMed.name, type: 'Adjustment', qty: -qty, user: 'Admin', remarks: `${formAdj.reason} - ${formAdj.remarks}` },
-      ...inventoryLogs
-    ]);
-
-    setIsAdjustmentOpen(false);
-
-    triggerAuditAndAlert(
-      'Stock Adjustment Logged',
-      `Warehouse Stock deducted by ${qty}`,
-      `${formAdj.reason} applied. Expired/damaged moved to Quarantine area.`,
-      'Warehouse Operations',
-      `Stock Adjustment Completed: ${formAdj.reason}`
-    );
   };
 
 
   // 6. Add Compartment
-  const handleAddCompartment = (e) => {
+  const handleAddCompartment = async (e) => {
     e.preventDefault();
     if (!formComp.name) {
       alert('Please fill out the compartment name');
       return;
     }
 
-    setRacksData(prev => prev.map(rack => {
-      if (rack.id !== activeRackId) return rack;
-      const compId = `${activeRackId.split('-')[1]}-${formComp.name}`;
-      const newCompartment = {
-        id: compId,
+    const genCompId = `COMP-${activeRackId.split('-')[1] || activeRackId}-${formComp.name.toUpperCase()}`;
+
+    try {
+      const res = await racksAPI.createCompartment(activeRackId, {
+        id: genCompId,
         name: formComp.name,
-        category: formComp.category,
-        medicineCount: 0,
-        capacity: parseInt(formComp.capacity) || 500,
-        usedCapacity: 0,
-        status: 'Active'
-      };
-      return {
-        ...rack,
-        compartments: [...rack.compartments, newCompartment]
-      };
-    }));
+        category: formComp.category || 'Analgesic',
+        maxCapacity: parseInt(formComp.capacity) || 500,
+        status: 'Active',
+        createdBy: 'Admin'
+      });
 
-    setIsAddCompartmentOpen(false);
+      if (res.success) {
+        setIsAddCompartmentOpen(false);
 
-    triggerAuditAndAlert(
-      'Add Sub-Rack Compartment',
-      'None',
-      `Added compartment ${formComp.name} to Rack ${activeRackId}`,
-      'Rack Allocation Operations',
-      `Compartment ${formComp.name} added successfully`
-    );
+        triggerAuditAndAlert(
+          'Add Sub-Rack Compartment',
+          'None',
+          `Added compartment ${formComp.name} to Rack ${activeRackId}`,
+          'Rack Allocation Operations',
+          `Compartment ${formComp.name} added successfully`
+        );
+
+        // Refresh racks
+        const racksRes = await racksAPI.getAll();
+        if (racksRes.success) setRacksData(racksRes.data);
+      }
+    } catch (err) {
+      alert("Error adding compartment: " + err.message);
+    }
   };
 
 
@@ -831,6 +813,7 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
           </div>
 
 
+
           {/* 🏬 WAREHOUSE CARDS LIST */}
           <div id="warehouse-grid" className="space-y-4 text-left">
             <div className="flex justify-between items-center">
@@ -857,7 +840,7 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {warehousesList.map((wh) => {
                 // Compute warehouse specific stock count
-                const whItems = warehouseStock.filter(item => item.warehouseName === wh.name);
+                const whItems = warehouseStock.filter(item => item.warehouseId === wh.id || item.warehouseName === wh.name || (item.warehouse && item.warehouse.name === wh.name));
                 const stockQty = whItems.reduce((sum, item) => sum + item.qty, 0);
                 const occupiedPct = Math.min(100, Math.round((stockQty / wh.storageCapacity) * 100));
                 const availableCap = Math.max(0, wh.storageCapacity - stockQty);
@@ -1066,6 +1049,7 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
               { id: 'racks', label: 'Rack Management', icon: Layers },
               { id: 'transfers', label: 'Stock Transfers', icon: ArrowLeftRight },
               { id: 'history', label: 'Transaction History', icon: ClipboardList },
+              { id: 'reports', label: 'Warehouse Reports', icon: TrendingUp },
               { id: 'docs', label: 'Warehouse Documents', icon: FileText }
             ].map(tab => {
               const TabIcon = tab.icon;
@@ -1232,6 +1216,7 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
                         <th className="py-3 px-4 text-center">Dates (Mfg/Exp)</th>
                         <th className="py-3 px-4 text-right">Quantity</th>
                         <th className="py-3 px-4 text-center">Rack Location</th>
+                        <th className="py-3 px-4 text-center">Movement</th>
                         <th className="py-3 px-4">Supplier</th>
                         <th className="py-3 px-4 text-center">Status</th>
                       </tr>
@@ -1253,6 +1238,15 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
                           <td className="py-3 px-4 text-center">
                             <span className="px-2 py-0.5 bg-emerald-50 border border-emerald-100 rounded text-emerald-800 font-bold text-[10px]">
                               {item.rackLocation}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
+                              item.movementStatus === 'Moved to rack' ? 'bg-emerald-50 text-emerald-700' :
+                              item.movementStatus === 'Partially moved' || item.movementStatus === 'Partially moved to rack' ? 'bg-amber-50 text-amber-700' :
+                              'bg-blue-50 text-blue-700'
+                            }`}>
+                              {item.movementStatus}
                             </span>
                           </td>
                           <td className="py-3 px-4 text-slate-600 font-medium">{item.supplier}</td>
@@ -1646,6 +1640,138 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
             )}
 
 
+            {/* TAB: WAREHOUSE REPORTS */}
+            {detailsTab === 'reports' && (() => {
+              const whInv = derivedInventory.filter(item => item.warehouseLocation === currentSelectedWH?.name || warehouseStock.some(ws => ws.warehouseId === currentSelectedWH?.id && ws.medicineId === item.medicineId));
+              const totalQtyInWH = whInv.reduce((s, i) => s + i.qty, 0);
+              const totalValueInWH = whInv.reduce((s, i) => {
+                const med = medicines.find(m => m.id === i.medicineId);
+                return s + (i.qty * (med?.price || 10));
+              }, 0);
+              const stockInMeds = warehouseStock.filter(ws => ws.warehouseId === currentSelectedWH?.id);
+              const movedToRack = stockInMeds.filter(ws => ws.movementStatus === 'Moved to rack' || ws.movementStatus === 'Partially moved to rack').length;
+              const nearExpiry = batches.filter(b => {
+                const days = (new Date(b.expiryDate) - new Date()) / (1000 * 60 * 60 * 24);
+                return days > 0 && days < 90;
+              }).length;
+
+              return (
+                <div className="space-y-6">
+                  <h4 className="font-extrabold text-slate-800 text-sm border-b border-slate-100 pb-3 flex items-center gap-2">
+                    <TrendingUp size={16} className="text-emerald-600" />
+                    Warehouse Performance Reports
+                  </h4>
+
+                  {/* KPI Summary Cards */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {[
+                      { label: 'Total Boxes in WH', value: totalQtyInWH.toLocaleString(), unit: 'boxes', color: 'bg-emerald-50 text-emerald-800 border-emerald-100' },
+                      { label: 'Stock Valuation', value: `₹${totalValueInWH.toLocaleString()}`, unit: 'total value', color: 'bg-blue-50 text-blue-800 border-blue-100' },
+                      { label: 'Moved to Rack', value: movedToRack, unit: 'SKUs transferred', color: 'bg-amber-50 text-amber-800 border-amber-100' },
+                      { label: 'Near Expiry Batches', value: nearExpiry, unit: 'batches', color: nearExpiry > 0 ? 'bg-rose-50 text-rose-800 border-rose-100' : 'bg-slate-50 text-slate-600 border-slate-100' },
+                    ].map(kpi => (
+                      <div key={kpi.label} className={`rounded-2xl p-4 border ${kpi.color} text-left`}>
+                        <span className="text-[9px] font-black uppercase tracking-widest block mb-1 opacity-60">{kpi.label}</span>
+                        <span className="text-xl font-black block">{kpi.value}</span>
+                        <span className="text-[9px] font-medium opacity-50">{kpi.unit}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Stock by Medicine Table */}
+                  <div className="space-y-3">
+                    <h5 className="text-xs font-black text-slate-700 uppercase tracking-wider">Stock Breakdown by Medicine</h5>
+                    <div className="overflow-x-auto border border-slate-100 rounded-2xl">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 text-slate-400 uppercase font-bold text-[9px] border-b border-slate-200/50">
+                            <th className="py-3 px-4">Medicine Name</th>
+                            <th className="py-3 px-4 text-center">Batch No.</th>
+                            <th className="py-3 px-4 text-right">WH Qty (boxes)</th>
+                            <th className="py-3 px-4 text-right">Unit Value</th>
+                            <th className="py-3 px-4 text-right">Total Value</th>
+                            <th className="py-3 px-4 text-center">Movement Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {stockInMeds.length > 0 ? stockInMeds.map((ws, idx) => {
+                            const med = medicines.find(m => m.id === ws.medicineId);
+                            const unitPrice = med?.price || 10;
+                            const totalVal = ws.qty * unitPrice;
+                            return (
+                              <tr key={idx} className="border-b border-slate-100 hover:bg-slate-50/50">
+                                <td className="py-3 px-4 font-extrabold text-slate-700">{med?.name || ws.medicine?.medicineName || 'Unknown'}</td>
+                                <td className="py-3 px-4 text-center font-mono text-slate-500">{ws.batchNumber || '—'}</td>
+                                <td className="py-3 px-4 text-right font-black text-slate-800">{ws.qty}</td>
+                                <td className="py-3 px-4 text-right text-slate-500">₹{unitPrice}</td>
+                                <td className="py-3 px-4 text-right font-bold text-emerald-700">₹{totalVal.toLocaleString()}</td>
+                                <td className="py-3 px-4 text-center">
+                                  <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
+                                    ws.movementStatus === 'Moved to rack' ? 'bg-slate-100 text-slate-500' :
+                                    ws.movementStatus === 'Partially moved to rack' ? 'bg-amber-50 text-amber-700' :
+                                    'bg-emerald-50 text-emerald-700'
+                                  }`}>
+                                    {ws.movementStatus || 'In warehouse'}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          }) : (
+                            <tr>
+                              <td colSpan={6} className="py-8 text-center text-slate-400 font-medium">No stock records found for this warehouse</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Stock Movements Summary */}
+                  <div className="space-y-3">
+                    <h5 className="text-xs font-black text-slate-700 uppercase tracking-wider">Recent Stock Movements</h5>
+                    <div className="overflow-x-auto border border-slate-100 rounded-2xl">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 text-slate-400 uppercase font-bold text-[9px] border-b border-slate-200/50">
+                            <th className="py-3 px-4">Movement ID</th>
+                            <th className="py-3 px-4">Medicine</th>
+                            <th className="py-3 px-4">Transfer Type</th>
+                            <th className="py-3 px-4 text-right">Qty</th>
+                            <th className="py-3 px-4">By</th>
+                            <th className="py-3 px-4">Remarks</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {warehouseTransfers.slice(0, 15).map((trx, idx) => (
+                            <tr key={idx} className="border-b border-slate-100 hover:bg-slate-50/50">
+                              <td className="py-3 px-4 font-mono font-bold text-slate-500">{trx.id?.slice(0,12) || `MOV-${idx}`}</td>
+                              <td className="py-3 px-4 font-bold text-slate-700">{trx.medicineName || trx.medicine?.medicineName || '—'}</td>
+                              <td className="py-3 px-4">
+                                <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
+                                  trx.transferType === 'Warehouse to Rack' || trx.transferType === 'GRN_RECEIVE' ? 'bg-emerald-50 text-emerald-700' :
+                                  trx.transferType === 'Rack to Warehouse' ? 'bg-amber-50 text-amber-700' :
+                                  'bg-blue-50 text-blue-700'
+                                }`}>
+                                  {trx.transferType || 'W2R'}
+                                </span>
+                              </td>
+                              <td className="py-3 px-4 text-right font-black text-slate-800">{trx.qty}</td>
+                              <td className="py-3 px-4 text-slate-500">{trx.movedBy || trx.transferredBy || 'Staff'}</td>
+                              <td className="py-3 px-4 text-slate-400">{trx.remarks || '—'}</td>
+                            </tr>
+                          ))}
+                          {warehouseTransfers.length === 0 && (
+                            <tr><td colSpan={6} className="py-8 text-center text-slate-400">No stock movements recorded yet</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+
             {/* TAB: WAREHOUSE DOCUMENTS */}
             {detailsTab === 'docs' && (
               <div className="space-y-4">
@@ -1870,7 +1996,7 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
                     <p className="text-[10px] text-slate-400 font-medium italic mt-0.5">{log.details}</p>
                   </div>
                   <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500 font-bold text-[9px]">
-                    {log.user}
+                    {typeof log.user === 'object' ? log.user?.username : log.user || 'Admin'}
                   </span>
                 </div>
               ))}
@@ -2215,7 +2341,7 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
               <div>
                 <label className="block font-bold text-slate-500 uppercase mb-1">Source Warehouse</label>
                 <select value={formW2R.warehouse} onChange={(e) => setFormW2R({ ...formW2R, warehouse: e.target.value })} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none cursor-pointer">
-                  {warehousesList.map(w => <option key={w.id} value={w.name}>{w.name}</option>)}
+                  {warehousesList.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                 </select>
               </div>
 
@@ -2308,7 +2434,7 @@ export default function WarehouseView({ role, setSchemaModalTable }) {
               <div>
                 <label className="block font-bold text-slate-500 uppercase mb-1">Target Warehouse</label>
                 <select value={formR2W.warehouse} onChange={(e) => setFormR2W({ ...formR2W, warehouse: e.target.value })} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none cursor-pointer">
-                  {warehousesList.map(w => <option key={w.id} value={w.name}>{w.name}</option>)}
+                  {warehousesList.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                 </select>
               </div>
 

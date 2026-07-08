@@ -37,6 +37,7 @@ export function useSupplierController() {
   const [performance, setPerformance] = useState([]);
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [medicinesList, setMedicinesList] = useState([]);
+  const [medicineMappings, setMedicineMappings] = useState([]);
 
   // ─── FETCH SUPPLIERS ────────────────────────────────────────────────────
   const fetchSuppliers = useCallback(async (params = {}) => {
@@ -63,7 +64,7 @@ export function useSupplierController() {
   // ─── FETCH ALL SUB-ENTITY DATA ─────────────────────────────────────────
   const fetchAllSubData = useCallback(async () => {
     try {
-      const [catRes, bmRes, ptRes, phRes, invRes, payRes, ldgRes, retRes, cnRes, docRes, perfRes, poRes, medRes] = await Promise.allSettled([
+      const [catRes, bmRes, ptRes, phRes, invRes, payRes, ldgRes, retRes, cnRes, docRes, perfRes, poRes, medRes, medMapRes] = await Promise.allSettled([
         api.get('/categories'),
         api.get('/brand-mapping'),
         api.get('/purchase-terms'),
@@ -76,7 +77,8 @@ export function useSupplierController() {
         api.get('/documents'),
         api.get('/performance'),
         api.get('/purchase-orders'),
-        axios.get(`${import.meta.env.VITE_API_URL || 'http://localhost:5002/api'}/medicines`, { headers: getHeaders(), params: { limit: 1000 } })
+        axios.get(`${import.meta.env.VITE_API_URL || 'http://localhost:5002/api'}/medicines`, { headers: getHeaders(), params: { limit: 1000 } }),
+        api.get('/medicine-mappings')
       ]);
 
       const extract = (r) => r.status === 'fulfilled' && r.value?.data?.success ? (r.value.data.data || []) : [];
@@ -97,6 +99,7 @@ export function useSupplierController() {
         const meds = medRes.value?.data?.data?.medicines || medRes.value?.data?.data || [];
         setMedicinesList(meds);
       }
+      setMedicineMappings(extract(medMapRes));
     } catch (err) { console.error('fetchAllSubData:', err); }
   }, []);
 
@@ -171,6 +174,19 @@ export function useSupplierController() {
 
   const deleteBrandMapping = async (id) => {
     const res = await api.del(`/brand-mapping/${id}`);
+    if (res.data?.success) await fetchAllSubData();
+    return res.data;
+  };
+
+  // ─── MEDICINE MAPPINGS ─────────────────────────────────────────────────
+  const createMedicineMapping = async (data) => {
+    const res = await api.post('/medicine-mappings', data);
+    if (res.data?.success) await fetchAllSubData();
+    return res.data;
+  };
+
+  const deleteMedicineMapping = async (id) => {
+    const res = await api.del(`/medicine-mappings/${id}`);
     if (res.data?.success) await fetchAllSubData();
     return res.data;
   };
@@ -314,11 +330,12 @@ export function useSupplierController() {
   return {
     loading, suppliers, pagination, selectedSupplier, setSelectedSupplier, dashboardStats,
     categories, brandMappings, purchaseTerms, priceHistory, invoices, payments, ledger,
-    returns, creditNotes, documents, performance, purchaseOrders, medicinesList,
+    returns, creditNotes, documents, performance, purchaseOrders, medicinesList, medicineMappings,
     fetchSuppliers, fetchDashboardStats, fetchAllSubData,
     createSupplier, updateSupplier, deleteSupplier, toggleSupplierStatus, toggleSupplierPreferred,
     createCategory, updateCategory, deleteCategory,
     createBrandMapping, updateBrandMapping, deleteBrandMapping,
+    createMedicineMapping, deleteMedicineMapping,
     createPurchaseTerm, updatePurchaseTerm, deletePurchaseTerm,
     createPriceHistory, createInvoice,
     createPayment, updatePayment, deletePayment,

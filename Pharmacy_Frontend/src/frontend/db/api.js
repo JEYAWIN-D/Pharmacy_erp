@@ -17,6 +17,11 @@ const request = async (method, path, body = null) => {
   const data = await res.json();
 
   if (!res.ok) {
+    if (res.status === 401) {
+      localStorage.removeItem('pharmacy_token');
+      localStorage.removeItem('pharmacy_role');
+      window.location.href = '/login';
+    }
     throw new Error(data.message || `HTTP ${res.status}`);
   }
   return data;
@@ -42,7 +47,8 @@ export const medicinesAPI = {
   getById: (id) => request('GET', `/medicines/${id}`),
   create: (body) => request('POST', '/medicines', body),
   update: (id, body) => request('PUT', `/medicines/${id}`, body),
-  delete: (id) => request('DELETE', `/medicines/${id}`)
+  delete: (id) => request('DELETE', `/medicines/${id}`),
+  getStatuses: () => request('GET', '/medicines/statuses')
 };
 
 // ─── Categories ───────────────────────────────────────────────────────────────
@@ -51,6 +57,14 @@ export const categoriesAPI = {
   create: (body) => request('POST', '/categories', body),
   update: (id, body) => request('PUT', `/categories/${id}`, body),
   delete: (id) => request('DELETE', `/categories/${id}`)
+};
+
+// ─── Medicine Types ───────────────────────────────────────────────────────────
+export const medicineTypesAPI = {
+  getAll: () => request('GET', '/medicine-types'),
+  create: (body) => request('POST', '/medicine-types', body),
+  update: (id, body) => request('PUT', `/medicine-types/${id}`, body),
+  delete: (id) => request('DELETE', `/medicine-types/${id}`)
 };
 
 // ─── Manufacturers ────────────────────────────────────────────────────────────
@@ -68,7 +82,11 @@ export const suppliersAPI = {
   create: (body) => request('POST', '/suppliers', body),
   update: (id, body) => request('PUT', `/suppliers/${id}`, body),
   delete: (id) => request('DELETE', `/suppliers/${id}`),
-  getExpiringLicenses: (days = 30) => request('GET', `/suppliers/expiring-licenses?days=${days}`)
+  getExpiringLicenses: (days = 30) => request('GET', `/suppliers/expiring-licenses?days=${days}`),
+  getMedicineMappings: (params = {}) => request('GET', `/suppliers/medicine-mappings?${new URLSearchParams(params)}`),
+  createMedicineMapping: (body) => request('POST', '/suppliers/medicine-mappings', body),
+  updateMedicineMapping: (id, body) => request('PUT', `/suppliers/medicine-mappings/${id}`, body),
+  deleteMedicineMapping: (id) => request('DELETE', `/suppliers/medicine-mappings/${id}`)
 };
 
 // ─── Batches ──────────────────────────────────────────────────────────────────
@@ -87,7 +105,10 @@ export const racksAPI = {
   getById: (id) => request('GET', `/racks/${id}`),
   create: (body) => request('POST', '/racks', body),
   update: (id, body) => request('PUT', `/racks/${id}`, body),
-  delete: (id) => request('DELETE', `/racks/${id}`)
+  delete: (id) => request('DELETE', `/racks/${id}`),
+  createCompartment: (id, body) => request('POST', `/racks/${id}/compartments`, body),
+  transfer: (body) => request('POST', '/racks/transfer', body),
+  allocate: (body) => request('POST', '/racks/allocate', body)
 };
 
 // ─── Warehouse ────────────────────────────────────────────────────────────────
@@ -251,7 +272,9 @@ export const expiryAPI = {
 export const coldStorageAPI = {
   getLogs: () => request('GET', '/cold-storage/logs'),
   getLatest: () => request('GET', '/cold-storage/latest'),
-  record: (body) => request('POST', '/cold-storage/record', body)
+  record: (body) => request('POST', '/cold-storage/record', body),
+  getStock: () => request('GET', '/cold-storage/stock'),
+  updateStockRecord: (id, body) => request('PUT', `/cold-storage/stock/${id}`, body)
 };
 
 // ─── Administration ───────────────────────────────────────────────────────────
@@ -267,7 +290,10 @@ export const administrationAPI = {
   getSupplierPayments: (params = {}) => request('GET', `/administration/supplier-payments?${new URLSearchParams(params)}`),
   createSupplierPayment: (body) => request('POST', '/administration/supplier-payments', body),
   getSupplierLedger: (params = {}) => request('GET', `/administration/supplier-ledger?${new URLSearchParams(params)}`),
-  createSupplierLedger: (body) => request('POST', '/administration/supplier-ledger', body)
+  createSupplierLedger: (body) => request('POST', '/administration/supplier-ledger', body),
+  getFinancePayments: (params = {}) => request('GET', `/administration/finance-payments?${new URLSearchParams(params)}`),
+  payFinanceInvoice: (body) => request('POST', '/administration/finance-payments/pay', body),
+  getFinanceReports: (params = {}) => request('GET', `/administration/finance-payments/reports?${new URLSearchParams(params)}`)
 };
 
 // ─── HR Management ────────────────────────────────────────────────────────────

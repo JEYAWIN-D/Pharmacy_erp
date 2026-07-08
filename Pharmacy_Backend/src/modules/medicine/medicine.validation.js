@@ -81,7 +81,53 @@ export const medicineValidation = [
   body('isActive')
     .optional()
     .isBoolean()
-    .withMessage('isActive must be a boolean')
+    .withMessage('isActive must be a boolean'),
+
+  body('medicineCode')
+    .optional({ checkFalsy: true })
+    .trim(),
+
+  body('typeId')
+    .optional({ checkFalsy: true })
+    .isUUID()
+    .withMessage('typeId must be a valid UUID'),
+
+  body('unit')
+    .optional({ checkFalsy: true })
+    .trim(),
+
+  body('mrp')
+    .optional({ checkFalsy: true })
+    .isFloat({ min: 0 })
+    .withMessage('MRP must be a non-negative number')
+    .toFloat(),
+
+  body('purchasePrice')
+    .optional({ checkFalsy: true })
+    .isFloat({ min: 0 })
+    .withMessage('Purchase price must be a non-negative number')
+    .toFloat(),
+
+  body('sellingPrice')
+    .optional({ checkFalsy: true })
+    .isFloat({ min: 0 })
+    .withMessage('Selling price must be a non-negative number')
+    .toFloat(),
+
+  body('lowestStockLevel')
+    .optional({ checkFalsy: true })
+    .isInt({ min: 0 })
+    .withMessage('Lowest stock level must be a non-negative integer')
+    .toInt(),
+
+  body('coldStorageRequired')
+    .optional()
+    .isBoolean()
+    .withMessage('Cold storage required must be a boolean'),
+
+  body('statusName')
+    .optional({ checkFalsy: true })
+    .trim()
 ];
 
 // ──────────────────────────────────────────────────────────────
